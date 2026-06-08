@@ -20,6 +20,9 @@
   function cfg() {
     return global.NZ_CONFIG || {};
   }
+  function pushOn() {
+    return !!(global.NZ_CONFIG && global.NZ_CONFIG.PUSH);
+  }
 
   function cacheGet() {
     try {
@@ -144,8 +147,9 @@
 
         if (mine.length) {
           const rows = mine.map((n) => {
-            const row = { id: n.id, owner: uid, data: stripRuntime(n), updated_at: iso(n), last_actor: uid };
+            const row = { id: n.id, owner: uid, data: stripRuntime(n), updated_at: iso(n) };
             if (n.share && n.share.code) row.share_code = n.share.code;
+            if (pushOn()) row.last_actor = uid; // nur wenn Push/Firebase eingerichtet (Spalte existiert)
             return row;
           });
           const { error } = await c.from('notes').upsert(rows);
@@ -154,7 +158,9 @@
 
         // Fremde geteilte Notizen: nur Inhalt aktualisieren (Besitz/Code unangetastet).
         for (const n of joined) {
-          await c.from('notes').update({ data: stripRuntime(n), updated_at: iso(n), last_actor: uid }).eq('id', n.id);
+          const patch = { data: stripRuntime(n), updated_at: iso(n) };
+          if (pushOn()) patch.last_actor = uid;
+          await c.from('notes').update(patch).eq('id', n.id);
         }
 
         // Nur EIGENE entfernte Notizen löschen (fremde geteilte bleiben).
@@ -187,27 +193,28 @@
   // Notiz teilen → erzeugt/holt Code, schreibt share_code. Gibt Code zurück.
   async function shareNote(note) {
     const c = await ensureClient();
-    let code = note.share && note.share.code;
-    if (!code) code = global.NZ.makeShareCode();
-    note.share = { code, createdBy: global.NZDevice.me(), createdAt: Date.now() };
-    let attempt = 0;
-    while (true) {
-      const { error } = await c
-        .from('notes')
-        .update({ share_code: code, data: stripRuntime(note) })
-        .eq('id', note.id)
-        .eq('owner', uid);
-      if (!error) break;
-      // Code-Kollision (unique) → neuen Code versuchen
+    let code = (note.share && note.share.code) || global.NZ.makeShareCode();
+    for (let attempt = 0; ; attempt++) {
+      note.share = { code, createdBy: global.NZDevice.me(), createdAt: Date.now() };
+      // UPSERT: stellt sicher, dass die Notiz MIT share_code in der Cloud liegt,
+      // auch wenn sie vorher noch nicht (vollständig) gespeichert war.
+      const row = {
+        id: note.id,
+        owner: uid,
+        data: stripRuntime(note),
+        share_code: code,
+        updated_at: new Date().toISOString()
+      };
+      if (pushOn()) row.last_actor = uid;
+      const { error } = await c.from('notes').upsert(row);
+      if (!error) return code;
+      // Code-Kollision (share_code unique) → neuen Code versuchen
       if (error.code === '23505' && attempt < 5) {
         code = global.NZ.makeShareCode();
-        note.share.code = code;
-        attempt++;
         continue;
       }
       throw error;
     }
-    return code;
   }
 
   // Beitreten per Code → gibt note_id zurück (oder null bei ungültig).
