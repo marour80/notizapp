@@ -69,8 +69,8 @@ NZStore.onChanged(async (info) => {
     if (!j) return;
     history.replaceState(null, '', location.pathname); // URL säubern (kein erneutes Beitreten bei Reload)
     NZStore.ready.then(() => {
-      $('joinInput').value = j;
-      showJoinModal(true);
+      showJoinModal(true); // zuerst öffnen (leert das Feld) …
+      $('joinInput').value = j; // … dann Code setzen
       doJoin();
     });
   } catch {}
