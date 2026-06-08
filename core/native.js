@@ -17,7 +17,7 @@
 
   function parseCode(raw) {
     const v = (raw || '').trim();
-    const m = v.match(/code=([^&\s]+)/i);
+    const m = v.match(/(?:join|code)=([^&\s]+)/i);
     return decodeURIComponent(m ? m[1] : v).trim().toUpperCase();
   }
 

@@ -62,6 +62,20 @@ NZStore.onChanged(async (info) => {
   }
 });
 
+// Eingehender Web-Link  …/?join=CODE  → automatisch beitreten (z.B. nach QR-Scan)
+(function handleJoinParam() {
+  try {
+    const j = new URLSearchParams(location.search).get('join');
+    if (!j) return;
+    history.replaceState(null, '', location.pathname); // URL säubern (kein erneutes Beitreten bei Reload)
+    NZStore.ready.then(() => {
+      $('joinInput').value = j;
+      showJoinModal(true);
+      doJoin();
+    });
+  } catch {}
+})();
+
 function persist() {
   NZStore.save(data);
 }
@@ -514,7 +528,8 @@ function cloudReady() {
   return window.NZShare && NZStore.kind === 'supabase';
 }
 function shareLinkFor(code) {
-  return 'notizapp://join?code=' + encodeURIComponent(code);
+  const base = (window.NZ_CONFIG && NZ_CONFIG.WEB_URL) || 'https://marour80.github.io/notizapp/';
+  return base + '?join=' + encodeURIComponent(code);
 }
 function showShareModal(show) {
   $('shareModal').classList.toggle('hidden', !show);
@@ -643,7 +658,7 @@ function showJoinModal(show) {
 
 function parseCode(raw) {
   const v = (raw || '').trim();
-  const m = v.match(/code=([^&\s]+)/i);
+  const m = v.match(/(?:join|code)=([^&\s]+)/i);
   return decodeURIComponent(m ? m[1] : v).trim().toUpperCase();
 }
 
