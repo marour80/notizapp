@@ -706,12 +706,16 @@ $('searchInput').oninput = (e) => {
   renderNoteList();
 };
 
+function submitSubtask() {
+  const inp = $('subAddInput');
+  addSubtask(inp.value);
+  inp.value = '';
+  inp.focus(); // gleich die nächste eingeben können
+}
 $('subAddInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    addSubtask(e.target.value);
-    e.target.value = '';
-  }
+  if (e.key === 'Enter') submitSubtask();
 });
+$('subAddBtn').onclick = submitSubtask;
 
 document.querySelectorAll('.editor-toolbar [data-fmt]').forEach((btn) => {
   btn.onclick = () => applyFormat(btn.dataset.fmt);
