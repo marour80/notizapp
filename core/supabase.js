@@ -272,12 +272,45 @@
     };
   }
 
+  // ---- Optionale E-Mail-Anmeldung (Notizen sichern/wiederherstellen) ----
+  async function getAuthInfo() {
+    const c = await ensureClient();
+    const { data } = await c.auth.getUser();
+    const u = data && data.user;
+    return { email: (u && u.email) || null, secured: !!(u && u.email) };
+  }
+
+  // Aktuelle (anonyme) Identität mit E-Mail+Passwort dauerhaft machen.
+  // uid bleibt gleich → vorhandene Notizen bleiben erhalten.
+  async function secureWithEmail(email, password) {
+    const c = await ensureClient();
+    const { data, error } = await c.auth.updateUser({ email: email.trim(), password });
+    if (error) throw error;
+    return data;
+  }
+
+  // Auf einem (anderen) Gerät anmelden → lädt die Notizen dieses Kontos.
+  async function signInEmail(email, password) {
+    const c = await ensureClient();
+    const { error } = await c.auth.signInWithPassword({ email: email.trim(), password });
+    if (error) throw error;
+    return true; // Aufrufer lädt die App neu (uid hat gewechselt)
+  }
+
+  async function signOutUser() {
+    const c = await ensureClient();
+    await c.auth.signOut();
+    await c.auth.signInAnonymously(); // neue anonyme Identität, App läuft weiter
+  }
+
   global.NZSupabase = {
     adapter,
     ensureClient,
     isReady: () => !!(client && uid),
     uid: () => uid
   };
+
+  global.NZAuth = { getAuthInfo, secureWithEmail, signInEmail, signOutUser };
 
   // Einheitliche Teilen-Schnittstelle (nur mit Cloud verfügbar).
   global.NZShare = {

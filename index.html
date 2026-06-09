@@ -49,6 +49,7 @@
         <ul id="tagList" class="tag-cloud"></ul>
       </div>
 
+      <button id="accountBtn" class="account-btn" title="Notizen sichern">🔒 Notizen sichern</button>
       <button id="themeToggle" class="theme-toggle" title="Theme wechseln">🌙 Dark</button>
     </aside>
 
@@ -182,6 +183,30 @@
       <div id="joinError" class="join-error hidden">Code nicht gefunden – bitte prüfen.</div>
       <button id="scanBtn" class="primary-btn hidden">📷 QR-Code scannen</button>
       <button id="doJoinBtn" class="primary-btn">Beitreten</button>
+    </div>
+  </div>
+
+  <!-- Anmelde-/Sicherungs-Dialog -->
+  <div id="authModal" class="modal-overlay hidden">
+    <div class="modal">
+      <button class="modal-close" id="authClose">✕</button>
+      <h2 id="authTitle">🔒 Notizen sichern</h2>
+      <p class="modal-hint" id="authHint">
+        Sichere deine Notizen mit E-Mail + Passwort. So bleiben sie dauerhaft erhalten – auch nach
+        Neustart oder Neuinstallation – und sind auf allen deinen Geräten gleich.
+      </p>
+      <input id="authEmail" class="auth-field" type="email" placeholder="E-Mail" autocomplete="email" />
+      <input id="authPassword" class="auth-field" type="password" placeholder="Passwort (mind. 6 Zeichen)" autocomplete="current-password" />
+      <div id="authError" class="join-error hidden"></div>
+      <button id="authSubmit" class="primary-btn">Notizen sichern</button>
+      <div class="auth-switch">
+        <span id="authSwitchText">Schon ein Konto?</span>
+        <a id="authSwitchLink" href="#">Anmelden</a>
+      </div>
+      <div id="authSignedIn" class="hidden">
+        <p class="modal-hint" id="authSignedInText"></p>
+        <button id="authSignout" class="danger-btn">Abmelden</button>
+      </div>
     </div>
   </div>
 

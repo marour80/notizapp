@@ -687,6 +687,117 @@ async function doJoin() {
   }
 }
 
+// ---- Konto / Notizen sichern (optionale E-Mail-Anmeldung) ----
+let authMode = 'secure';
+
+function authAvailable() {
+  return !!window.NZAuth && NZStore.kind === 'supabase';
+}
+
+async function updateAccountUI() {
+  if (!authAvailable()) {
+    $('accountBtn').classList.add('hidden');
+    return;
+  }
+  try {
+    const info = await NZAuth.getAuthInfo();
+    $('accountBtn')._secured = info.secured;
+    $('accountBtn')._email = info.email;
+    $('accountBtn').textContent = info.secured ? '✓ ' + info.email : '🔒 Notizen sichern';
+    $('accountBtn').classList.toggle('secured', info.secured);
+  } catch {}
+}
+
+function renderAuthMode() {
+  const secured = $('accountBtn')._secured;
+  const formIds = ['authEmail', 'authPassword', 'authSubmit'];
+  if (secured) {
+    $('authTitle').textContent = '✓ Notizen gesichert';
+    $('authHint').classList.add('hidden');
+    formIds.forEach((id) => $(id).classList.add('hidden'));
+    document.querySelector('.auth-switch').classList.add('hidden');
+    $('authSignedIn').classList.remove('hidden');
+    $('authSignedInText').textContent =
+      'Angemeldet als ' + ($('accountBtn')._email || '') + '. Deine Notizen sind gesichert und auf allen Geräten gleich.';
+    return;
+  }
+  $('authHint').classList.remove('hidden');
+  formIds.forEach((id) => $(id).classList.remove('hidden'));
+  document.querySelector('.auth-switch').classList.remove('hidden');
+  $('authSignedIn').classList.add('hidden');
+  $('authError').classList.add('hidden');
+  if (authMode === 'secure') {
+    $('authTitle').textContent = '🔒 Notizen sichern';
+    $('authHint').textContent =
+      'Sichere deine Notizen mit E-Mail + Passwort. So bleiben sie dauerhaft erhalten – auch nach Neustart oder Neuinstallation – und sind auf allen deinen Geräten gleich.';
+    $('authSubmit').textContent = 'Notizen sichern';
+    $('authSwitchText').textContent = 'Schon ein Konto?';
+    $('authSwitchLink').textContent = 'Anmelden';
+  } else {
+    $('authTitle').textContent = '⮕ Anmelden';
+    $('authHint').textContent = 'Melde dich an, um deine gesicherten Notizen auf diesem Gerät zu laden.';
+    $('authSubmit').textContent = 'Anmelden';
+    $('authSwitchText').textContent = 'Noch kein Konto?';
+    $('authSwitchLink').textContent = 'Notizen sichern';
+  }
+}
+
+function openAuth() {
+  if (!authAvailable()) {
+    alert('Sichern braucht Internet/Cloud.');
+    return;
+  }
+  authMode = 'secure';
+  $('authEmail').value = '';
+  $('authPassword').value = '';
+  $('authError').classList.add('hidden');
+  renderAuthMode();
+  $('authModal').classList.remove('hidden');
+}
+
+function showAuthError(msg) {
+  $('authError').textContent = msg;
+  $('authError').classList.remove('hidden');
+}
+
+function translateAuthError(e) {
+  const m = ((e && e.message) || '').toLowerCase();
+  if (m.includes('registered')) return 'Diese E-Mail ist schon vergeben. Nutze unten „Anmelden".';
+  if (m.includes('invalid login') || m.includes('credentials')) return 'E-Mail oder Passwort falsch.';
+  if (m.includes('password')) return 'Passwort zu kurz (mind. 6 Zeichen).';
+  if (m.includes('email')) return 'Bitte eine gültige E-Mail eingeben.';
+  return 'Fehler: ' + ((e && e.message) || e);
+}
+
+async function submitAuth() {
+  const email = $('authEmail').value.trim();
+  const password = $('authPassword').value;
+  if (!email || !password) return showAuthError('Bitte E-Mail und Passwort eingeben.');
+  if (password.length < 6) return showAuthError('Passwort muss mind. 6 Zeichen haben.');
+  $('authSubmit').disabled = true;
+  try {
+    if (authMode === 'secure') {
+      await NZAuth.secureWithEmail(email, password);
+      $('authModal').classList.add('hidden');
+      await updateAccountUI();
+      alert('✓ Notizen gesichert! Du kannst dich jetzt auf anderen Geräten mit dieser E-Mail anmelden.');
+    } else {
+      await NZAuth.signInEmail(email, password);
+      location.reload(); // mit dem Konto neu laden (lädt dessen Notizen)
+    }
+  } catch (e) {
+    showAuthError(translateAuthError(e));
+  } finally {
+    $('authSubmit').disabled = false;
+  }
+}
+
+async function signOutAccount() {
+  if (!confirm('Abmelden? Auf diesem Gerät startest du dann wieder anonym.')) return;
+  await NZAuth.signOutUser();
+  location.reload();
+}
+
 // ---- Events ----
 $('newNoteBtn').onclick = newNote;
 $('fabNew').onclick = newNote;
@@ -808,6 +919,24 @@ document.querySelectorAll('.copy-btn').forEach((btn) => {
     if (e.target === ov) ov.classList.add('hidden');
   });
 });
+
+// ---- Konto-Events ----
+$('accountBtn').onclick = openAuth;
+$('authClose').onclick = () => $('authModal').classList.add('hidden');
+$('authSubmit').onclick = submitAuth;
+$('authSignout').onclick = signOutAccount;
+$('authSwitchLink').onclick = (e) => {
+  e.preventDefault();
+  authMode = authMode === 'secure' ? 'signin' : 'secure';
+  renderAuthMode();
+};
+$('authPassword').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitAuth();
+});
+$('authModal').addEventListener('click', (e) => {
+  if (e.target === $('authModal')) $('authModal').classList.add('hidden');
+});
+NZStore.ready.then(() => updateAccountUI());
 
 // ---- Handy-Navigation ----
 function setNav(open) {
