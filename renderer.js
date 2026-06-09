@@ -936,7 +936,21 @@ $('authPassword').addEventListener('keydown', (e) => {
 $('authModal').addEventListener('click', (e) => {
   if (e.target === $('authModal')) $('authModal').classList.add('hidden');
 });
-NZStore.ready.then(() => updateAccountUI());
+NZStore.ready.then(async () => {
+  await updateAccountUI();
+  // Falls von iOS abgemeldet, aber E-Mail bekannt → freundlich zum Anmelden auffordern
+  const remembered = window.NZAuth && NZAuth.lastEmail ? NZAuth.lastEmail() : null;
+  if (authAvailable() && !$('accountBtn')._secured && remembered) {
+    authMode = 'signin';
+    $('authEmail').value = remembered;
+    $('authPassword').value = '';
+    renderAuthMode();
+    $('authHint').textContent =
+      'Willkommen zurück! Melde dich an, um deine gesicherten Notizen zu laden.';
+    $('authModal').classList.remove('hidden');
+    setTimeout(() => $('authPassword').focus(), 150);
+  }
+});
 
 // ---- Handy-Navigation ----
 function setNav(open) {

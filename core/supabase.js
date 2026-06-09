@@ -286,6 +286,9 @@
     const c = await ensureClient();
     const { data, error } = await c.auth.updateUser({ email: email.trim(), password });
     if (error) throw error;
+    try {
+      localStorage.setItem('nz_last_email', email.trim());
+    } catch {}
     return data;
   }
 
@@ -294,11 +297,25 @@
     const c = await ensureClient();
     const { error } = await c.auth.signInWithPassword({ email: email.trim(), password });
     if (error) throw error;
+    try {
+      localStorage.setItem('nz_last_email', email.trim());
+    } catch {}
     return true; // Aufrufer lädt die App neu (uid hat gewechselt)
+  }
+
+  function lastEmail() {
+    try {
+      return localStorage.getItem('nz_last_email') || null;
+    } catch {
+      return null;
+    }
   }
 
   async function signOutUser() {
     const c = await ensureClient();
+    try {
+      localStorage.removeItem('nz_last_email');
+    } catch {}
     await c.auth.signOut();
     await c.auth.signInAnonymously(); // neue anonyme Identität, App läuft weiter
   }
@@ -310,7 +327,7 @@
     uid: () => uid
   };
 
-  global.NZAuth = { getAuthInfo, secureWithEmail, signInEmail, signOutUser };
+  global.NZAuth = { getAuthInfo, secureWithEmail, signInEmail, signOutUser, lastEmail };
 
   // Einheitliche Teilen-Schnittstelle (nur mit Cloud verfügbar).
   global.NZShare = {
