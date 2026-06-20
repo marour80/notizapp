@@ -21,16 +21,47 @@ const folderSelect = $('folderSelect');
 const previewEl = $('preview');
 
 // ---- Core aliases (plattformunabhängig, siehe src/core/) ----
-const { uid, deriveStatus, applyAutoStatus, statusLabel, escapeHtml, stripMd, formatDate } = NZ;
+const { uid, deriveStatus, applyAutoStatus, escapeHtml, stripMd, formatDate } = NZ;
 const STATUS_ORDER = NZ.STATUS_ORDER;
+
+// ---- i18n (Deutsch / Englisch) ----
+const t = (key, vars) => (window.NZI18N ? NZI18N.t(key, vars) : key);
+function statusLabel(s) {
+  return t({ todo: 'statusTodo', doing: 'statusDoing', done: 'statusDone' }[s] || 'statusTodo');
+}
 
 // ---- Init ----
 (async function init() {
   data = await NZStore.load();
+  applyLanguage(); // setzt statische Texte + Toggle-Label
   const theme = localStorage.getItem('theme') || 'dark';
   applyTheme(theme);
   renderAll();
 })();
+
+// ---- Sprache anwenden / umschalten ----
+function applyLanguage() {
+  if (!window.NZI18N) return;
+  NZI18N.apply();
+  const lt = $('langToggle');
+  if (lt) lt.textContent = NZI18N.lang === 'de' ? '🌐 EN' : '🌐 DE';
+}
+function toggleLanguage() {
+  if (!window.NZI18N) return;
+  NZI18N.set(NZI18N.lang === 'de' ? 'en' : 'de');
+  applyLanguage();
+  // dynamische UI neu aufbauen
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  $('themeToggle').textContent = theme === 'dark' ? t('themeDark') : t('themeLight');
+  renderAll();
+  updateAccountUI();
+  const note = currentNote();
+  if (note) {
+    renderStatusRow(note.status || 'todo');
+    renderSubtasks();
+    updateSharedBadge(note);
+  }
+}
 
 // Live-sync when another window/tab/device changes notes
 NZStore.onChanged(async (info) => {
@@ -114,7 +145,7 @@ function renderAll() {
 
 function renderFolders() {
   folderListEl.innerHTML = '';
-  const items = [{ key: '__all__', label: 'Alle Notizen', icon: '✦' }];
+  const items = [{ key: '__all__', label: t('allNotes'), icon: '✦' }];
   data.folders.forEach((f) => items.push({ key: f, label: f, icon: '📁' }));
 
   items.forEach((it) => {
@@ -132,7 +163,7 @@ function renderFolders() {
     };
     if (it.key !== '__all__') {
       li.ondblclick = () => deleteFolder(it.key);
-      li.title = 'Doppelklick zum Löschen';
+      li.title = t('dblClickDelete');
     }
     folderListEl.appendChild(li);
   });
@@ -143,7 +174,7 @@ function renderTags() {
   data.notes.forEach((n) => (n.tags || []).forEach((t) => allTags.add(t)));
   tagListEl.innerHTML = '';
   if (allTags.size === 0) {
-    tagListEl.innerHTML = '<span style="font-size:11px;color:var(--text-faint);padding:4px 6px;">Noch keine Tags</span>';
+    tagListEl.innerHTML = '<span style="font-size:11px;color:var(--text-faint);padding:4px 6px;">' + t('noTagsYet') + '</span>';
     return;
   }
   [...allTags].sort().forEach((t) => {
@@ -159,7 +190,7 @@ function renderTags() {
 }
 
 function renderFolderSelect() {
-  folderSelect.innerHTML = '<option value="">Kein Ordner</option>';
+  folderSelect.innerHTML = '<option value="">' + t('noFolder') + '</option>';
   data.folders.forEach((f) => {
     const opt = document.createElement('option');
     opt.value = f;
@@ -172,7 +203,7 @@ function renderNoteList() {
   const list = filteredNotes();
   $('noteCount').textContent = list.length;
   $('listTitle').textContent =
-    currentTag ? '#' + currentTag : currentFolder === '__all__' ? 'Alle Notizen' : currentFolder;
+    currentTag ? '#' + currentTag : currentFolder === '__all__' ? t('allNotes') : currentFolder;
 
   noteListEl.innerHTML = '';
   $('emptyList').classList.toggle('hidden', list.length > 0);
@@ -195,10 +226,10 @@ function renderNoteList() {
     const snippet = escapeHtml(stripMd(n.body || ''));
     li.innerHTML = `
       <div class="card-title-row">
-        <span class="dot dot-${status}" title="${statusLabel(status)}${hasSubs ? ' (aus Teilaufgaben)' : ' – Klick zum Wechseln'}"></span>
-        <h3>${escapeHtml(n.title) || 'Ohne Titel'}</h3>
+        <span class="dot dot-${status}" title="${statusLabel(status)}${hasSubs ? ' ' + t('fromSubtasks') : ' ' + t('clickToCycle')}"></span>
+        <h3>${escapeHtml(n.title) || t('untitled')}</h3>
       </div>
-      <div class="snippet">${snippet || (subs.length ? subs.map((s) => '• ' + escapeHtml(s.text)).join('  ') : 'Keine weiteren Inhalte')}</div>
+      <div class="snippet">${snippet || (subs.length ? subs.map((s) => '• ' + escapeHtml(s.text)).join('  ') : t('noContent'))}</div>
       <div class="card-meta">${shareHtml}${subHtml}${tagHtml}<span>${formatDate(n.updatedAt)}</span></div>`;
     li.querySelector('.dot').onclick = (e) => {
       e.stopPropagation();
@@ -267,11 +298,11 @@ function scheduleSave() {
     .map((t) => t.trim())
     .filter(Boolean);
   note.updatedAt = Date.now();
-  $('savedHint').textContent = 'Speichern…';
+  $('savedHint').textContent = t('saving');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     persist();
-    $('savedHint').textContent = 'Automatisch gespeichert ✓';
+    $('savedHint').textContent = t('savedAutoCheck');
     renderFolders();
     renderTags();
     renderNoteList();
@@ -281,7 +312,7 @@ function scheduleSave() {
 function deleteNote() {
   const note = currentNote();
   if (!note) return;
-  if (!confirm('Diese Notiz wirklich löschen?')) return;
+  if (!confirm(t('deleteNoteConfirm'))) return;
   data.notes = data.notes.filter((n) => n.id !== note.id);
   activeNoteId = null;
   leavePresence();
@@ -334,10 +365,10 @@ function renderSubtasks() {
     const li = document.createElement('li');
     li.className = 'sub-item' + (status === 'done' ? ' done' : '');
     li.innerHTML = `
-      <span class="dot dot-${status}" title="${statusLabel(status)} – Klick zum Wechseln"></span>
+      <span class="dot dot-${status}" title="${statusLabel(status)} ${t('clickToCycle')}"></span>
       <input class="sub-text" type="text" value="" />
       ${noteShared ? whoBadge(st) : ''}
-      <button class="sub-del" title="Teilaufgabe löschen">✕</button>`;
+      <button class="sub-del" title="${t('deleteSubtask')}">✕</button>`;
     const input = li.querySelector('.sub-text');
     input.value = st.text || '';
     li.querySelector('.dot').onclick = () => cycleSubtask(st.id);
@@ -365,7 +396,7 @@ function renderSubtasks() {
 function updateSubProgress(note) {
   const subs = note.subtasks || [];
   const done = subs.filter((s) => (s.status || 'todo') === 'done').length;
-  $('subProgress').textContent = subs.length ? `${done}/${subs.length} erledigt` : '';
+  $('subProgress').textContent = subs.length ? t('progressDone', { done, total: subs.length }) : '';
 }
 
 let subSaveTimer = null;
@@ -409,9 +440,9 @@ function cycleSubtask(stId) {
 function whoBadge(st) {
   if (!st.updatedBy) return '';
   const mine = st.updatedBy.id === NZDevice.getId();
-  const who = mine ? 'du' : st.updatedBy.nickname || 'jemand';
+  const who = mine ? t('you') : st.updatedBy.nickname || t('someone');
   const color = st.updatedBy.color || 'var(--text-faint)';
-  return `<span class="sub-who" style="color:${color}" title="zuletzt geändert von ${escapeHtml(who)}">● ${escapeHtml(who)}</span>`;
+  return `<span class="sub-who" style="color:${color}" title="${t('lastChangedBy', { who: escapeHtml(who) })}">● ${escapeHtml(who)}</span>`;
 }
 
 function deleteSubtask(stId) {
@@ -427,7 +458,7 @@ function deleteSubtask(stId) {
 
 // ---- Folders ----
 function newFolder() {
-  const name = prompt('Name des neuen Ordners:');
+  const name = prompt(t('newFolderPrompt'));
   if (!name || !name.trim()) return;
   const clean = name.trim();
   if (data.folders.includes(clean)) return;
@@ -437,7 +468,7 @@ function newFolder() {
 }
 
 function deleteFolder(name) {
-  if (!confirm(`Ordner "${name}" löschen? (Notizen bleiben erhalten)`)) return;
+  if (!confirm(t('deleteFolderConfirm', { name }))) return;
   data.folders = data.folders.filter((f) => f !== name);
   data.notes.forEach((n) => {
     if (n.folder === name) n.folder = '';
@@ -518,7 +549,7 @@ function applyFormat(fmt) {
 // ---- Theme ----
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
-  $('themeToggle').textContent = theme === 'dark' ? '🌙 Dark' : '☀️ Light';
+  $('themeToggle').textContent = theme === 'dark' ? t('themeDark') : t('themeLight');
   localStorage.setItem('theme', theme);
 }
 
@@ -558,7 +589,7 @@ async function openShare() {
   const note = currentNote();
   if (!note) return;
   if (!cloudReady()) {
-    alert('Teilen braucht Internet/Cloud. Sobald du online bist, wird die Notiz geteilt.');
+    alert(t('needCloud'));
     return;
   }
   showShareModal(true);
@@ -578,7 +609,7 @@ async function doShare() {
     renderNoteList();
     updateSharedBadge(note);
   } catch (e) {
-    alert('Teilen fehlgeschlagen: ' + (e.message || e));
+    alert(t('shareFailed') + (e.message || e));
   } finally {
     $('shareBusy').classList.add('hidden');
     $('doShareBtn').disabled = false;
@@ -588,7 +619,7 @@ async function doShare() {
 async function doUnshare() {
   const note = currentNote();
   if (!note || !cloudReady()) return;
-  if (!confirm('Teilen beenden? Andere verlieren den Zugriff.')) return;
+  if (!confirm(t('stopSharingConfirm'))) return;
   try {
     await window.NZShare.unshareNote(note);
     note.shared = false;
@@ -597,7 +628,7 @@ async function doUnshare() {
     renderNoteList();
     updateSharedBadge(note);
   } catch (e) {
-    alert('Fehler: ' + (e.message || e));
+    alert(t('errGeneric') + (e.message || e));
   }
 }
 
@@ -605,7 +636,7 @@ function updateSharedBadge(note) {
   const shared = !!(note && note.share && note.share.code);
   $('sharedBadge').classList.toggle('hidden', !shared);
   $('sharedBadge').textContent = shared
-    ? (note.ownedByMe === false ? '🔗 Geteilt (von jemandem)' : '🔗 Geteilt · ' + note.share.code)
+    ? (note.ownedByMe === false ? t('sharedBy') : t('shared') + ' · ' + note.share.code)
     : '';
 }
 
@@ -634,7 +665,7 @@ function renderPresence(list) {
   const dots = people
     .map((p) => `<span class="pres-dot" style="background:${p.color || '#888'}" title="${escapeHtml(p.nickname || '')}"></span>`)
     .join('');
-  row.innerHTML = `${dots}<span class="pres-text">${people.length} online</span>`;
+  row.innerHTML = `${dots}<span class="pres-text">${t('online', { n: people.length })}</span>`;
   row.classList.remove('hidden');
 }
 
@@ -642,7 +673,7 @@ function renderPresence(list) {
 function notifyChange(title) {
   try {
     new Notification('NotizApp 🔗', {
-      body: (title ? '„' + title + '" ' : 'Eine geteilte Notiz ') + 'wurde aktualisiert.'
+      body: title ? t('noteUpdated', { title }) : t('genericUpdated')
     });
   } catch {}
 }
@@ -665,7 +696,7 @@ function parseCode(raw) {
 
 async function doJoin() {
   if (!cloudReady()) {
-    alert('Beitreten braucht Internet/Cloud.');
+    alert(t('joinNeedCloud'));
     return;
   }
   const code = parseCode($('joinInput').value);
@@ -682,7 +713,7 @@ async function doJoin() {
     showJoinModal(false);
     openNote(noteId);
   } catch (e) {
-    alert('Beitreten fehlgeschlagen: ' + (e.message || e));
+    alert(t('joinFailed') + (e.message || e));
   } finally {
     $('doJoinBtn').disabled = false;
   }
@@ -704,7 +735,7 @@ async function updateAccountUI() {
     const info = await NZAuth.getAuthInfo();
     $('accountBtn')._secured = info.secured;
     $('accountBtn')._email = info.email;
-    $('accountBtn').textContent = info.secured ? '✓ ' + info.email : '🔒 Notizen sichern';
+    $('accountBtn').textContent = info.secured ? '✓ ' + info.email : t('backup');
     $('accountBtn').classList.toggle('secured', info.secured);
   } catch {}
 }
@@ -713,13 +744,12 @@ function renderAuthMode() {
   const secured = $('accountBtn')._secured;
   const formIds = ['authEmail', 'authPassword', 'authSubmit'];
   if (secured) {
-    $('authTitle').textContent = '✓ Notizen gesichert';
+    $('authTitle').textContent = t('securedTitle');
     $('authHint').classList.add('hidden');
     formIds.forEach((id) => $(id).classList.add('hidden'));
     document.querySelector('.auth-switch').classList.add('hidden');
     $('authSignedIn').classList.remove('hidden');
-    $('authSignedInText').textContent =
-      'Angemeldet als ' + ($('accountBtn')._email || '') + '. Deine Notizen sind gesichert und auf allen Geräten gleich.';
+    $('authSignedInText').textContent = t('signedInAs', { email: $('accountBtn')._email || '' });
     return;
   }
   $('authHint').classList.remove('hidden');
@@ -728,24 +758,23 @@ function renderAuthMode() {
   $('authSignedIn').classList.add('hidden');
   $('authError').classList.add('hidden');
   if (authMode === 'secure') {
-    $('authTitle').textContent = '🔒 Notizen sichern';
-    $('authHint').textContent =
-      'Sichere deine Notizen mit E-Mail + Passwort. So bleiben sie dauerhaft erhalten – auch nach Neustart oder Neuinstallation – und sind auf allen deinen Geräten gleich.';
-    $('authSubmit').textContent = 'Notizen sichern';
-    $('authSwitchText').textContent = 'Schon ein Konto?';
-    $('authSwitchLink').textContent = 'Anmelden';
+    $('authTitle').textContent = t('backupTitleModal');
+    $('authHint').textContent = t('backupHint');
+    $('authSubmit').textContent = t('backupBtn');
+    $('authSwitchText').textContent = t('haveAccount');
+    $('authSwitchLink').textContent = t('signIn');
   } else {
-    $('authTitle').textContent = '⮕ Anmelden';
-    $('authHint').textContent = 'Melde dich an, um deine gesicherten Notizen auf diesem Gerät zu laden.';
-    $('authSubmit').textContent = 'Anmelden';
-    $('authSwitchText').textContent = 'Noch kein Konto?';
-    $('authSwitchLink').textContent = 'Notizen sichern';
+    $('authTitle').textContent = t('signInTitle');
+    $('authHint').textContent = t('signInHint');
+    $('authSubmit').textContent = t('signIn');
+    $('authSwitchText').textContent = t('noAccountYet');
+    $('authSwitchLink').textContent = t('backupBtn');
   }
 }
 
 function openAuth() {
   if (!authAvailable()) {
-    alert('Sichern braucht Internet/Cloud.');
+    alert(t('backupNeedCloud'));
     return;
   }
   authMode = 'secure';
@@ -763,25 +792,25 @@ function showAuthError(msg) {
 
 function translateAuthError(e) {
   const m = ((e && e.message) || '').toLowerCase();
-  if (m.includes('registered')) return 'Diese E-Mail ist schon vergeben. Nutze unten „Anmelden".';
-  if (m.includes('invalid login') || m.includes('credentials')) return 'E-Mail oder Passwort falsch.';
-  if (m.includes('password')) return 'Passwort zu kurz (mind. 6 Zeichen).';
-  if (m.includes('email')) return 'Bitte eine gültige E-Mail eingeben.';
-  return 'Fehler: ' + ((e && e.message) || e);
+  if (m.includes('registered')) return t('errEmailTaken');
+  if (m.includes('invalid login') || m.includes('credentials')) return t('errBadLogin');
+  if (m.includes('password')) return t('errPw');
+  if (m.includes('email')) return t('errEmail');
+  return t('errGeneric') + ((e && e.message) || e);
 }
 
 async function submitAuth() {
   const email = $('authEmail').value.trim();
   const password = $('authPassword').value;
-  if (!email || !password) return showAuthError('Bitte E-Mail und Passwort eingeben.');
-  if (password.length < 6) return showAuthError('Passwort muss mind. 6 Zeichen haben.');
+  if (!email || !password) return showAuthError(t('fillEmailPw'));
+  if (password.length < 6) return showAuthError(t('pwTooShort'));
   $('authSubmit').disabled = true;
   try {
     if (authMode === 'secure') {
       await NZAuth.secureWithEmail(email, password);
       $('authModal').classList.add('hidden');
       await updateAccountUI();
-      alert('✓ Notizen gesichert! Du kannst dich jetzt auf anderen Geräten mit dieser E-Mail anmelden.');
+      alert(t('backedUp'));
     } else {
       await NZAuth.signInEmail(email, password);
       location.reload(); // mit dem Konto neu laden (lädt dessen Notizen)
@@ -794,7 +823,7 @@ async function submitAuth() {
 }
 
 async function signOutAccount() {
-  if (!confirm('Abmelden? Auf diesem Gerät startest du dann wieder anonym.')) return;
+  if (!confirm(t('signOutConfirm'))) return;
   await NZAuth.signOutUser();
   location.reload();
 }
@@ -806,7 +835,7 @@ function aiAvailable() {
 
 function createNoteFromAI(title, items) {
   const note = NZ.makeNote({
-    title: title || 'Neue Liste',
+    title: title || t('newList'),
     folder: currentFolder === '__all__' ? '' : currentFolder,
     tags: currentTag ? [currentTag] : []
   });
@@ -823,14 +852,14 @@ async function aiGenerate() {
   if (!prompt) return;
   $('aiSubmit').disabled = true;
   const oldT = $('aiSubmit').textContent;
-  $('aiSubmit').textContent = '✨ Erstelle…';
+  $('aiSubmit').textContent = t('aiCreating');
   $('aiError').classList.add('hidden');
   try {
     const res = await NZAI.generate(prompt);
     $('aiModal').classList.add('hidden');
     createNoteFromAI(res.title, res.items);
   } catch (e) {
-    $('aiError').textContent = 'Fehler: ' + (e.message || e);
+    $('aiError').textContent = t('errGeneric') + (e.message || e);
     $('aiError').classList.remove('hidden');
   } finally {
     $('aiSubmit').disabled = false;
@@ -844,7 +873,7 @@ async function aiSort() {
   const btn = $('sortBtn');
   btn.disabled = true;
   const oldT = btn.textContent;
-  btn.textContent = '✨ …';
+  btn.textContent = t('sorting');
   try {
     const res = await NZAI.sort(note.subtasks.map((s) => s.text));
     const norm = (s) => (s || '').trim().toLowerCase();
@@ -863,7 +892,7 @@ async function aiSort() {
     renderSubtasks();
     renderNoteList();
   } catch (e) {
-    alert('Sortieren fehlgeschlagen: ' + (e.message || e));
+    alert(t('sortFailed') + (e.message || e));
   } finally {
     btn.disabled = false;
     btn.textContent = oldT;
@@ -914,7 +943,7 @@ async function startVoice() {
     }, 1000);
   } catch (e) {
     $('voiceRecording').classList.add('hidden');
-    showVoiceError('Mikrofon nicht verfügbar oder abgelehnt.');
+    showVoiceError(t('micDenied'));
   }
 }
 
@@ -944,7 +973,7 @@ async function processVoice(blob) {
     createNoteFromAI(res.title, res.items);
   } catch (e) {
     $('voiceProcessing').classList.add('hidden');
-    showVoiceError('Fehler: ' + (e.message || e));
+    showVoiceError(t('errGeneric') + (e.message || e));
   }
 }
 
@@ -974,6 +1003,7 @@ $('deleteBtn').onclick = deleteNote;
 $('previewToggle').onclick = togglePreview;
 $('themeToggle').onclick = () =>
   applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+if ($('langToggle')) $('langToggle').onclick = toggleLanguage;
 
 titleInput.oninput = scheduleSave;
 bodyInput.oninput = scheduleSave;
@@ -1039,7 +1069,7 @@ if (window.NZNative && NZNative.scanAvailable()) {
         doJoin();
       }
     } catch (e) {
-      if ((e.message || '') !== 'no-scanner') alert('Scan abgebrochen oder fehlgeschlagen.');
+      if ((e.message || '') !== 'no-scanner') alert(t('scanCancelled'));
     }
   };
 }
@@ -1073,7 +1103,7 @@ document.querySelectorAll('.copy-btn').forEach((btn) => {
     }
     btn.classList.add('copied');
     const old = btn.textContent;
-    btn.textContent = 'Kopiert ✓';
+    btn.textContent = t('copied');
     setTimeout(() => {
       btn.classList.remove('copied');
       btn.textContent = old;
@@ -1117,8 +1147,7 @@ NZStore.ready.then(async () => {
     $('authEmail').value = remembered;
     $('authPassword').value = '';
     renderAuthMode();
-    $('authHint').textContent =
-      'Willkommen zurück! Melde dich an, um deine gesicherten Notizen zu laden.';
+    $('authHint').textContent = t('welcomeBack');
     $('authModal').classList.remove('hidden');
     setTimeout(() => $('authPassword').focus(), 150);
   }

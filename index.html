@@ -25,127 +25,130 @@
       </div>
 
       <button id="newNoteBtn" class="new-note-btn">
-        <span>+</span> Neue Notiz
+        <span>+</span> <span data-i18n="newNote">Neue Notiz</span>
       </button>
 
-      <button id="joinBtn" class="join-btn" title="Geteilter Notiz beitreten">
-        ⮕ Beitreten
+      <button id="joinBtn" class="join-btn" data-i18n-title="joinTitle" title="Geteilter Notiz beitreten">
+        ⮕ <span data-i18n="join">Beitreten</span>
       </button>
 
-      <button id="aiBtn" class="ai-btn hidden" title="Liste aus einem Satz erstellen">
-        ✨ KI-Liste
+      <button id="aiBtn" class="ai-btn hidden" data-i18n-title="aiListTitle" title="Liste aus einem Satz erstellen">
+        ✨ <span data-i18n="aiList">KI-Liste</span>
       </button>
 
-      <button id="voiceBtn" class="voice-btn hidden" title="Sprachnotiz aufnehmen">
-        🎤 Sprachnotiz
+      <button id="voiceBtn" class="voice-btn hidden" data-i18n-title="voiceNoteTitle" title="Sprachnotiz aufnehmen">
+        🎤 <span data-i18n="voiceNote">Sprachnotiz</span>
       </button>
 
       <div class="search-box">
-        <input id="searchInput" type="text" placeholder="Suchen…" autocomplete="off" />
+        <input id="searchInput" type="text" data-i18n-ph="search" placeholder="Suchen…" autocomplete="off" />
       </div>
 
       <nav class="folders">
         <div class="folders-head">
-          <span>Ordner</span>
-          <button id="newFolderBtn" title="Neuer Ordner">+</button>
+          <span data-i18n="folders">Ordner</span>
+          <button id="newFolderBtn" data-i18n-title="newFolder" title="Neuer Ordner">+</button>
         </div>
         <ul id="folderList"></ul>
       </nav>
 
       <div class="tags-section">
-        <div class="folders-head"><span>Tags</span></div>
+        <div class="folders-head"><span data-i18n="tags">Tags</span></div>
         <ul id="tagList" class="tag-cloud"></ul>
       </div>
 
-      <button id="accountBtn" class="account-btn" title="Notizen sichern">🔒 Notizen sichern</button>
-      <button id="themeToggle" class="theme-toggle" title="Theme wechseln">🌙 Dark</button>
+      <button id="accountBtn" class="account-btn" data-i18n-title="backupTitle" data-i18n="backup" title="Notizen sichern">🔒 Notizen sichern</button>
+      <div class="bottom-row">
+        <button id="langToggle" class="theme-toggle" data-i18n-title="langTitle" title="Sprache wechseln">🌐 EN</button>
+        <button id="themeToggle" class="theme-toggle" title="Theme">🌙 Dark</button>
+      </div>
     </aside>
 
     <!-- Note list -->
     <section class="note-list-panel">
       <div class="list-header">
-        <button id="menuBtn" class="mobile-only icon-btn" title="Menü">☰</button>
+        <button id="menuBtn" class="mobile-only icon-btn" data-i18n-title="menu" title="Menü">☰</button>
         <h2 id="listTitle">Alle Notizen</h2>
         <span id="noteCount" class="count">0</span>
       </div>
       <div class="status-filter">
-        <button data-filter="all" class="active">Alle</button>
+        <button data-filter="all" class="active" data-i18n="filterAll">Alle</button>
         <button data-filter="todo"><span class="dot dot-todo"></span></button>
         <button data-filter="doing"><span class="dot dot-doing"></span></button>
         <button data-filter="done"><span class="dot dot-done"></span></button>
       </div>
       <ul id="noteList" class="note-list"></ul>
-      <div id="emptyList" class="empty-list hidden">Keine Notizen hier.<br/>Tippe auf <b>+</b> für deine erste Notiz!</div>
+      <div id="emptyList" class="empty-list hidden" data-i18n="emptyList">Keine Notizen hier.<br/>Tippe auf <b>+</b> für deine erste Notiz!</div>
     </section>
 
-    <button id="fabNew" class="fab" title="Neue Notiz" aria-label="Neue Notiz">+</button>
+    <button id="fabNew" class="fab" data-i18n-title="newNoteTitle" data-i18n-aria="newNoteTitle" title="Neue Notiz" aria-label="Neue Notiz">+</button>
 
     <!-- Editor -->
     <main class="editor-panel">
       <div id="editorEmpty" class="editor-empty">
         <span class="big-logo">✦</span>
-        <p>Wähle eine Notiz oder erstelle eine neue.</p>
+        <p data-i18n="editorEmpty">Wähle eine Notiz oder erstelle eine neue.</p>
       </div>
 
       <div id="editor" class="editor hidden">
         <div class="editor-toolbar">
           <div class="toolbar-left">
-            <button id="backBtn" class="mobile-only" title="Zurück zur Liste">‹ Liste</button>
-            <button data-fmt="bold" title="Fett (Strg+B)"><b>B</b></button>
-            <button data-fmt="italic" title="Kursiv (Strg+I)"><i>I</i></button>
-            <button data-fmt="h1" title="Überschrift">H</button>
-            <button data-fmt="list" title="Liste">☰</button>
-            <button data-fmt="code" title="Code">&lt;/&gt;</button>
-            <button id="previewToggle" title="Vorschau">👁</button>
+            <button id="backBtn" class="mobile-only" data-i18n-title="backToListTitle" title="Zurück zur Liste"><span data-i18n="backToList">‹ Liste</span></button>
+            <button data-fmt="bold" data-i18n-title="bold" title="Fett (Strg+B)"><b>B</b></button>
+            <button data-fmt="italic" data-i18n-title="italic" title="Kursiv (Strg+I)"><i>I</i></button>
+            <button data-fmt="h1" data-i18n-title="heading" title="Überschrift">H</button>
+            <button data-fmt="list" data-i18n-title="listFmt" title="Liste">☰</button>
+            <button data-fmt="code" data-i18n-title="code" title="Code">&lt;/&gt;</button>
+            <button id="previewToggle" data-i18n-title="preview" title="Vorschau">👁</button>
           </div>
           <div class="toolbar-right">
-            <button id="shareBtn" title="Teilen">🔗</button>
-            <button id="deleteBtn" class="danger" title="Löschen">🗑</button>
+            <button id="shareBtn" data-i18n-title="share" title="Teilen">🔗</button>
+            <button id="deleteBtn" class="danger" data-i18n-title="delete" title="Löschen">🗑</button>
           </div>
         </div>
 
-        <input id="titleInput" class="title-input" type="text" placeholder="Titel…" />
+        <input id="titleInput" class="title-input" type="text" data-i18n-ph="title" placeholder="Titel…" />
         <div class="badge-row">
           <div id="sharedBadge" class="shared-badge hidden">🔗 Geteilt</div>
           <div id="presenceRow" class="presence-row hidden"></div>
         </div>
 
         <div class="status-row">
-          <button class="status-opt" data-status="todo" title="Noch nicht angefangen">
-            <span class="dot dot-todo"></span> Noch nicht angefangen
+          <button class="status-opt" data-status="todo" data-i18n-title="statusTodo" title="Noch nicht angefangen">
+            <span class="dot dot-todo"></span> <span data-i18n="statusTodo">Noch nicht angefangen</span>
           </button>
-          <button class="status-opt" data-status="doing" title="In Bearbeitung">
-            <span class="dot dot-doing"></span> In Bearbeitung
+          <button class="status-opt" data-status="doing" data-i18n-title="statusDoing" title="In Bearbeitung">
+            <span class="dot dot-doing"></span> <span data-i18n="statusDoing">In Bearbeitung</span>
           </button>
-          <button class="status-opt" data-status="done" title="Geschafft">
-            <span class="dot dot-done"></span> Geschafft ✓
+          <button class="status-opt" data-status="done" data-i18n-title="statusDone" title="Geschafft">
+            <span class="dot dot-done"></span> <span data-i18n="statusDoneCheck">Geschafft ✓</span>
           </button>
-          <span id="statusAuto" class="status-auto hidden">⛓ automatisch aus Teilaufgaben</span>
+          <span id="statusAuto" class="status-auto hidden" data-i18n="statusAuto">⛓ automatisch aus Teilaufgaben</span>
         </div>
 
         <div class="meta-row">
           <select id="folderSelect" class="folder-select"></select>
-          <input id="tagsInput" class="tags-input" type="text" placeholder="Tags (Komma getrennt)…" />
+          <input id="tagsInput" class="tags-input" type="text" data-i18n-ph="tagsInput" placeholder="Tags (Komma getrennt)…" />
         </div>
 
-        <textarea id="bodyInput" class="body-input" placeholder="Schreib drauf los… (Markdown wird unterstützt)"></textarea>
+        <textarea id="bodyInput" class="body-input" data-i18n-ph="bodyPlaceholder" placeholder="Schreib drauf los… (Markdown wird unterstützt)"></textarea>
         <div id="preview" class="preview hidden"></div>
 
         <div class="subtasks">
           <div class="subtasks-head">
-            <span>Teilaufgaben <span id="subProgress" class="sub-progress"></span></span>
-            <button id="sortBtn" class="sort-btn hidden" title="Einkauf nach Bereichen sortieren">✨ Sortieren</button>
+            <span><span data-i18n="subtasks">Teilaufgaben</span> <span id="subProgress" class="sub-progress"></span></span>
+            <button id="sortBtn" class="sort-btn hidden" data-i18n-title="sortTitle" data-i18n="sort" title="Einkauf nach Bereichen sortieren">✨ Sortieren</button>
           </div>
           <ul id="subList" class="sub-list"></ul>
           <div class="sub-add">
             <span class="dot dot-todo"></span>
-            <input id="subAddInput" type="text" placeholder="Neue Teilaufgabe…" autocomplete="off" enterkeyhint="done" />
-            <button id="subAddBtn" class="sub-add-btn" title="Teilaufgabe hinzufügen" aria-label="Teilaufgabe hinzufügen">+</button>
+            <input id="subAddInput" type="text" data-i18n-ph="newSubtask" placeholder="Neue Teilaufgabe…" autocomplete="off" enterkeyhint="done" />
+            <button id="subAddBtn" class="sub-add-btn" data-i18n-title="addSubtask" data-i18n-aria="addSubtask" title="Teilaufgabe hinzufügen" aria-label="Teilaufgabe hinzufügen">+</button>
           </div>
         </div>
 
         <div class="editor-footer">
-          <span id="savedHint">Automatisch gespeichert</span>
+          <span id="savedHint" data-i18n="savedAuto">Automatisch gespeichert</span>
         </div>
       </div>
     </main>
@@ -155,29 +158,29 @@
   <div id="shareModal" class="modal-overlay hidden">
     <div class="modal">
       <button class="modal-close" id="shareClose">✕</button>
-      <h2>🔗 Notiz teilen</h2>
-      <div id="shareBusy" class="modal-hint hidden">Einen Moment…</div>
+      <h2 data-i18n="shareNote">🔗 Notiz teilen</h2>
+      <div id="shareBusy" class="modal-hint hidden" data-i18n="oneMoment">Einen Moment…</div>
 
       <div id="shareUnshared">
-        <p class="modal-hint">Teile diese Notiz, damit andere sie live mitbearbeiten können – ganz ohne Konto.</p>
-        <button id="doShareBtn" class="primary-btn">Jetzt teilen</button>
+        <p class="modal-hint" data-i18n="shareHintUnshared">Teile diese Notiz, damit andere sie live mitbearbeiten können – ganz ohne Konto.</p>
+        <button id="doShareBtn" class="primary-btn" data-i18n="shareNow">Jetzt teilen</button>
       </div>
 
       <div id="shareShared" class="hidden">
-        <p class="modal-hint">Per Code, Link oder QR teilen. Jede Änderung erscheint sofort bei allen.</p>
-        <label>Code zum Vorlesen</label>
+        <p class="modal-hint" data-i18n="shareHintShared">Per Code, Link oder QR teilen. Jede Änderung erscheint sofort bei allen.</p>
+        <label data-i18n="codeToRead">Code zum Vorlesen</label>
         <div class="copy-row">
           <input id="shareCode" readonly />
-          <button class="copy-btn" data-copy="shareCode">Kopieren</button>
+          <button class="copy-btn" data-copy="shareCode" data-i18n="copy">Kopieren</button>
         </div>
-        <label>Link zum Senden</label>
+        <label data-i18n="linkToSend">Link zum Senden</label>
         <div class="copy-row">
           <input id="shareLink" readonly />
-          <button class="copy-btn" data-copy="shareLink">Kopieren</button>
+          <button class="copy-btn" data-copy="shareLink" data-i18n="copy">Kopieren</button>
         </div>
-        <label>QR-Code (mit dem Handy scannen)</label>
+        <label data-i18n="qrLabel">QR-Code (mit dem Handy scannen)</label>
         <div class="qr-wrap"><div id="shareQr"></div></div>
-        <button id="unshareBtn" class="danger-btn">Teilen beenden</button>
+        <button id="unshareBtn" class="danger-btn" data-i18n="stopSharing">Teilen beenden</button>
       </div>
     </div>
   </div>
@@ -186,12 +189,12 @@
   <div id="joinModal" class="modal-overlay hidden">
     <div class="modal">
       <button class="modal-close" id="joinClose">✕</button>
-      <h2>⮕ Notiz beitreten</h2>
-      <p class="modal-hint">Gib den Code oder Link ein, den du bekommen hast.</p>
-      <input id="joinInput" class="join-field" type="text" placeholder="z. B. OTTER-734" autocomplete="off" />
-      <div id="joinError" class="join-error hidden">Code nicht gefunden – bitte prüfen.</div>
-      <button id="scanBtn" class="primary-btn hidden">📷 QR-Code scannen</button>
-      <button id="doJoinBtn" class="primary-btn">Beitreten</button>
+      <h2 data-i18n="joinNote">⮕ Notiz beitreten</h2>
+      <p class="modal-hint" data-i18n="joinHint">Gib den Code oder Link ein, den du bekommen hast.</p>
+      <input id="joinInput" class="join-field" type="text" data-i18n-ph="joinPlaceholder" placeholder="z. B. OTTER-734" autocomplete="off" />
+      <div id="joinError" class="join-error hidden" data-i18n="codeNotFound">Code nicht gefunden – bitte prüfen.</div>
+      <button id="scanBtn" class="primary-btn hidden" data-i18n="scanQr">📷 QR-Code scannen</button>
+      <button id="doJoinBtn" class="primary-btn" data-i18n="join">Beitreten</button>
     </div>
   </div>
 
@@ -204,8 +207,8 @@
         Sichere deine Notizen mit E-Mail + Passwort. So bleiben sie dauerhaft erhalten – auch nach
         Neustart oder Neuinstallation – und sind auf allen deinen Geräten gleich.
       </p>
-      <input id="authEmail" class="auth-field" type="email" placeholder="E-Mail" autocomplete="email" />
-      <input id="authPassword" class="auth-field" type="password" placeholder="Passwort (mind. 6 Zeichen)" autocomplete="current-password" />
+      <input id="authEmail" class="auth-field" type="email" data-i18n-ph="email" placeholder="E-Mail" autocomplete="email" />
+      <input id="authPassword" class="auth-field" type="password" data-i18n-ph="password" placeholder="Passwort (mind. 6 Zeichen)" autocomplete="current-password" />
       <div id="authError" class="join-error hidden"></div>
       <button id="authSubmit" class="primary-btn">Notizen sichern</button>
       <div class="auth-switch">
@@ -214,7 +217,7 @@
       </div>
       <div id="authSignedIn" class="hidden">
         <p class="modal-hint" id="authSignedInText"></p>
-        <button id="authSignout" class="danger-btn">Abmelden</button>
+        <button id="authSignout" class="danger-btn" data-i18n="signOut">Abmelden</button>
       </div>
     </div>
   </div>
@@ -223,16 +226,16 @@
   <div id="voiceModal" class="modal-overlay hidden">
     <div class="modal">
       <button class="modal-close" id="voiceClose">✕</button>
-      <h2>🎤 Sprachnotiz</h2>
+      <h2 data-i18n="voiceNoteModal">🎤 Sprachnotiz</h2>
       <div id="voiceRecording">
         <div class="voice-pulse">🎙️</div>
-        <p class="modal-hint">Sprich deine Liste ein – z. B. „Ich muss Milch, Brot und Eier kaufen und den Müll rausbringen."</p>
+        <p class="modal-hint" data-i18n="voiceRecHint">Sprich deine Liste ein – z. B. „Ich muss Milch, Brot und Eier kaufen und den Müll rausbringen."</p>
         <p class="voice-timer" id="voiceTimer">0:00</p>
-        <button id="voiceStop" class="primary-btn">⏹ Fertig &amp; Liste erstellen</button>
+        <button id="voiceStop" class="primary-btn" data-i18n="voiceDone">⏹ Fertig &amp; Liste erstellen</button>
       </div>
       <div id="voiceProcessing" class="hidden">
         <div class="voice-pulse">✨</div>
-        <p class="modal-hint">Transkribiere &amp; erstelle Liste…</p>
+        <p class="modal-hint" data-i18n="voiceProcessing">Transkribiere &amp; erstelle Liste…</p>
       </div>
       <div id="voiceError" class="join-error hidden"></div>
     </div>
@@ -242,12 +245,12 @@
   <div id="aiModal" class="modal-overlay hidden">
     <div class="modal">
       <button class="modal-close" id="aiClose">✕</button>
-      <h2>✨ Liste aus einem Satz</h2>
-      <p class="modal-hint">Beschreibe, was du brauchst – die KI erstellt eine fertige Liste mit Teilaufgaben.</p>
-      <input id="aiInput" class="auth-field" type="text" placeholder="z. B. Wocheneinkauf für 4 Personen" autocomplete="off" />
+      <h2 data-i18n="aiModalTitle">✨ Liste aus einem Satz</h2>
+      <p class="modal-hint" data-i18n="aiModalHint">Beschreibe, was du brauchst – die KI erstellt eine fertige Liste mit Teilaufgaben.</p>
+      <input id="aiInput" class="auth-field" type="text" data-i18n-ph="aiPlaceholder" placeholder="z. B. Wocheneinkauf für 4 Personen" autocomplete="off" />
       <div id="aiError" class="join-error hidden"></div>
-      <button id="aiSubmit" class="primary-btn">✨ Liste erstellen</button>
-      <div class="ai-examples">
+      <button id="aiSubmit" class="primary-btn" data-i18n="aiCreate">✨ Liste erstellen</button>
+      <div class="ai-examples" data-i18n="aiExamples">
         Beispiele: „Packliste 3 Tage Berlin", „Putzplan WG", „Geburtstagsparty planen"
       </div>
     </div>
@@ -256,6 +259,7 @@
   <script src="core/config.js"></script>
   <script src="vendor/supabase.js"></script>
   <script src="vendor/qrcode.js"></script>
+  <script src="core/i18n.js"></script>
   <script src="core/model.js"></script>
   <script src="core/device.js"></script>
   <script src="core/supabase.js"></script>

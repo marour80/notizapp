@@ -200,6 +200,8 @@ input, textarea, [contenteditable], .body-input, .preview {
   font-size: 13px;
 }
 .theme-toggle:hover { color: var(--text); border-color: var(--accent); }
+.bottom-row { display: flex; gap: 8px; }
+.bottom-row .theme-toggle { flex: 1; }
 
 /* ---- Status dots & controls ---- */
 .dot {
