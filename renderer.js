@@ -2,7 +2,6 @@
 let data = { notes: [], folders: [] };
 let activeNoteId = null;
 let currentFolder = '__all__';
-let currentTag = null;
 let currentStatus = 'all';
 let searchTerm = '';
 let saveTimer = null;
@@ -11,14 +10,11 @@ let saveTimer = null;
 const $ = (id) => document.getElementById(id);
 const noteListEl = $('noteList');
 const folderListEl = $('folderList');
-const tagListEl = $('tagList');
 const editorEl = $('editor');
 const editorEmptyEl = $('editorEmpty');
 const titleInput = $('titleInput');
 const bodyInput = $('bodyInput');
-const tagsInput = $('tagsInput');
 const folderSelect = $('folderSelect');
-const previewEl = $('preview');
 
 // ---- Core aliases (plattformunabhängig, siehe src/core/) ----
 const { uid, deriveStatus, applyAutoStatus, escapeHtml, stripMd, formatDate } = NZ;
@@ -117,9 +113,6 @@ function filteredNotes() {
   if (currentFolder !== '__all__') {
     list = list.filter((n) => (n.folder || '') === currentFolder);
   }
-  if (currentTag) {
-    list = list.filter((n) => (n.tags || []).includes(currentTag));
-  }
   if (currentStatus !== 'all') {
     list = list.filter((n) => (n.status || 'todo') === currentStatus);
   }
@@ -128,8 +121,7 @@ function filteredNotes() {
     list = list.filter(
       (n) =>
         (n.title || '').toLowerCase().includes(q) ||
-        (n.body || '').toLowerCase().includes(q) ||
-        (n.tags || []).some((t) => t.toLowerCase().includes(q))
+        (n.body || '').toLowerCase().includes(q)
     );
   }
   return list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -138,7 +130,6 @@ function filteredNotes() {
 // ---- Rendering ----
 function renderAll() {
   renderFolders();
-  renderTags();
   renderFolderSelect();
   renderNoteList();
 }
@@ -158,7 +149,6 @@ function renderFolders() {
     li.innerHTML = `<span class="ficon">${it.icon}</span><span>${escapeHtml(it.label)}</span><span class="fcount">${count}</span>`;
     li.onclick = () => {
       currentFolder = it.key;
-      currentTag = null;
       renderAll();
     };
     if (it.key !== '__all__') {
@@ -166,26 +156,6 @@ function renderFolders() {
       li.title = t('dblClickDelete');
     }
     folderListEl.appendChild(li);
-  });
-}
-
-function renderTags() {
-  const allTags = new Set();
-  data.notes.forEach((n) => (n.tags || []).forEach((t) => allTags.add(t)));
-  tagListEl.innerHTML = '';
-  if (allTags.size === 0) {
-    tagListEl.innerHTML = '<span style="font-size:11px;color:var(--text-faint);padding:4px 6px;">' + t('noTagsYet') + '</span>';
-    return;
-  }
-  [...allTags].sort().forEach((t) => {
-    const li = document.createElement('li');
-    li.className = 'tag-chip' + (currentTag === t ? ' active' : '');
-    li.textContent = '#' + t;
-    li.onclick = () => {
-      currentTag = currentTag === t ? null : t;
-      renderAll();
-    };
-    tagListEl.appendChild(li);
   });
 }
 
@@ -202,8 +172,7 @@ function renderFolderSelect() {
 function renderNoteList() {
   const list = filteredNotes();
   $('noteCount').textContent = list.length;
-  $('listTitle').textContent =
-    currentTag ? '#' + currentTag : currentFolder === '__all__' ? t('allNotes') : currentFolder;
+  $('listTitle').textContent = currentFolder === '__all__' ? t('allNotes') : currentFolder;
 
   noteListEl.innerHTML = '';
   $('emptyList').classList.toggle('hidden', list.length > 0);
@@ -213,10 +182,6 @@ function renderNoteList() {
     const hasSubs = (n.subtasks || []).length > 0;
     const li = document.createElement('li');
     li.className = 'note-card status-' + status + (n.id === activeNoteId ? ' active' : '');
-    const tagHtml = (n.tags || [])
-      .slice(0, 2)
-      .map((t) => `<span class="card-tag">#${escapeHtml(t)}</span>`)
-      .join('');
     const subs = n.subtasks || [];
     const subDone = subs.filter((s) => (s.status || 'todo') === 'done').length;
     const subHtml = subs.length
@@ -230,7 +195,7 @@ function renderNoteList() {
         <h3>${escapeHtml(n.title) || t('untitled')}</h3>
       </div>
       <div class="snippet">${snippet || (subs.length ? subs.map((s) => '• ' + escapeHtml(s.text)).join('  ') : t('noContent'))}</div>
-      <div class="card-meta">${shareHtml}${subHtml}${tagHtml}<span>${formatDate(n.updatedAt)}</span></div>`;
+      <div class="card-meta">${shareHtml}${subHtml}<span>${formatDate(n.updatedAt)}</span></div>`;
     li.querySelector('.dot').onclick = (e) => {
       e.stopPropagation();
       if (hasSubs) {
@@ -251,7 +216,7 @@ function newNote() {
     title: '',
     body: '',
     folder: currentFolder === '__all__' ? '' : currentFolder,
-    tags: currentTag ? [currentTag] : [],
+    tags: [],
     status: currentStatus !== 'all' ? currentStatus : 'todo',
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -273,13 +238,11 @@ function openNote(id) {
   editorEl.classList.remove('hidden');
   titleInput.value = note.title || '';
   bodyInput.value = note.body || '';
-  tagsInput.value = (note.tags || []).join(', ');
   folderSelect.value = note.folder || '';
   renderStatusRow(note.status || 'todo');
   renderSubtasks();
   updateSharedBadge(note);
   updatePresence(note);
-  showEditMode();
   renderNoteList();
 }
 
@@ -293,10 +256,6 @@ function scheduleSave() {
   note.title = titleInput.value;
   note.body = bodyInput.value;
   note.folder = folderSelect.value;
-  note.tags = tagsInput.value
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean);
   note.updatedAt = Date.now();
   $('savedHint').textContent = t('saving');
   clearTimeout(saveTimer);
@@ -304,7 +263,6 @@ function scheduleSave() {
     persist();
     $('savedHint').textContent = t('savedAutoCheck');
     renderFolders();
-    renderTags();
     renderNoteList();
   }, 400);
 }
@@ -476,74 +434,6 @@ function deleteFolder(name) {
   if (currentFolder === name) currentFolder = '__all__';
   persist();
   renderAll();
-}
-
-// ---- Markdown / preview ----
-function showEditMode() {
-  bodyInput.classList.remove('hidden');
-  previewEl.classList.add('hidden');
-  $('previewToggle').classList.remove('active');
-}
-
-function togglePreview() {
-  const isPreview = !previewEl.classList.contains('hidden');
-  if (isPreview) {
-    showEditMode();
-  } else {
-    previewEl.innerHTML = renderMarkdown(bodyInput.value);
-    bodyInput.classList.add('hidden');
-    previewEl.classList.remove('hidden');
-    $('previewToggle').classList.add('active');
-  }
-}
-
-function renderMarkdown(src) {
-  let html = escapeHtml(src);
-  html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');
-  html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  html = html.replace(/`(.+?)`/g, '<code>$1</code>');
-  html = html.replace(/^[-*] (.*)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
-  html = html
-    .split(/\n{2,}/)
-    .map((block) =>
-      /^\s*<(h1|h2|ul|li)/.test(block.trim()) ? block : `<p>${block.replace(/\n/g, '<br/>')}</p>`
-    )
-    .join('');
-  return html;
-}
-
-function applyFormat(fmt) {
-  const ta = bodyInput;
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
-  const sel = ta.value.slice(start, end);
-  const wraps = {
-    bold: ['**', '**'],
-    italic: ['*', '*'],
-    code: ['`', '`']
-  };
-  const lines = {
-    h1: '# ',
-    list: '- '
-  };
-  let newText;
-  let cursor;
-  if (wraps[fmt]) {
-    const [a, b] = wraps[fmt];
-    newText = ta.value.slice(0, start) + a + (sel || 'Text') + b + ta.value.slice(end);
-    cursor = start + a.length + (sel || 'Text').length + b.length;
-  } else if (lines[fmt]) {
-    const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
-    newText = ta.value.slice(0, lineStart) + lines[fmt] + ta.value.slice(lineStart);
-    cursor = end + lines[fmt].length;
-  }
-  ta.value = newText;
-  ta.focus();
-  ta.setSelectionRange(cursor, cursor);
-  scheduleSave();
 }
 
 // ---- Theme ----
@@ -828,7 +718,7 @@ async function signOutAccount() {
   location.reload();
 }
 
-// ---- KI (Liste erstellen / Einkauf sortieren) ----
+// ---- KI (Einkauf sortieren / Sprachnotiz) ----
 function aiAvailable() {
   return !!(window.NZAI && NZAI.available() && NZStore.kind === 'supabase');
 }
@@ -837,7 +727,7 @@ function createNoteFromAI(title, items) {
   const note = NZ.makeNote({
     title: title || t('newList'),
     folder: currentFolder === '__all__' ? '' : currentFolder,
-    tags: currentTag ? [currentTag] : []
+    tags: []
   });
   note.subtasks = (items || []).map((t) => NZ.makeSubtask(t, NZDevice.me()));
   applyAutoStatus(note);
@@ -845,26 +735,6 @@ function createNoteFromAI(title, items) {
   persist();
   renderAll();
   openNote(note.id);
-}
-
-async function aiGenerate() {
-  const prompt = $('aiInput').value.trim();
-  if (!prompt) return;
-  $('aiSubmit').disabled = true;
-  const oldT = $('aiSubmit').textContent;
-  $('aiSubmit').textContent = t('aiCreating');
-  $('aiError').classList.add('hidden');
-  try {
-    const res = await NZAI.generate(prompt);
-    $('aiModal').classList.add('hidden');
-    createNoteFromAI(res.title, res.items);
-  } catch (e) {
-    $('aiError').textContent = t('errGeneric') + (e.message || e);
-    $('aiError').classList.remove('hidden');
-  } finally {
-    $('aiSubmit').disabled = false;
-    $('aiSubmit').textContent = oldT;
-  }
 }
 
 async function aiSort() {
@@ -983,31 +853,15 @@ $('fabNew').onclick = newNote;
 $('voiceBtn').onclick = startVoice;
 $('voiceStop').onclick = stopVoice;
 $('voiceClose').onclick = closeVoice;
-$('aiBtn').onclick = () => {
-  $('aiInput').value = '';
-  $('aiError').classList.add('hidden');
-  $('aiModal').classList.remove('hidden');
-  setTimeout(() => $('aiInput').focus(), 50);
-};
-$('aiClose').onclick = () => $('aiModal').classList.add('hidden');
-$('aiSubmit').onclick = aiGenerate;
-$('aiInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') aiGenerate();
-});
 $('sortBtn').onclick = aiSort;
-$('aiModal').addEventListener('click', (e) => {
-  if (e.target === $('aiModal')) $('aiModal').classList.add('hidden');
-});
 $('newFolderBtn').onclick = newFolder;
 $('deleteBtn').onclick = deleteNote;
-$('previewToggle').onclick = togglePreview;
 $('themeToggle').onclick = () =>
   applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
 if ($('langToggle')) $('langToggle').onclick = toggleLanguage;
 
 titleInput.oninput = scheduleSave;
 bodyInput.oninput = scheduleSave;
-tagsInput.oninput = scheduleSave;
 folderSelect.onchange = scheduleSave;
 
 $('searchInput').oninput = (e) => {
@@ -1025,10 +879,6 @@ $('subAddInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitSubtask();
 });
 $('subAddBtn').onclick = submitSubtask;
-
-document.querySelectorAll('.editor-toolbar [data-fmt]').forEach((btn) => {
-  btn.onclick = () => applyFormat(btn.dataset.fmt);
-});
 
 document.querySelectorAll('.status-opt').forEach((btn) => {
   btn.onclick = () => {
@@ -1137,7 +987,6 @@ $('authModal').addEventListener('click', (e) => {
 NZStore.ready.then(async () => {
   await updateAccountUI();
   if (window.NZAI && NZAI.available() && NZStore.kind === 'supabase') {
-    $('aiBtn').classList.remove('hidden');
     if (micSupported()) $('voiceBtn').classList.remove('hidden');
   }
   // Falls von iOS abgemeldet, aber E-Mail bekannt → freundlich zum Anmelden auffordern
@@ -1166,9 +1015,5 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault();
     newNote();
-  }
-  if ((e.ctrlKey || e.metaKey) && document.activeElement === bodyInput) {
-    if (e.key === 'b') { e.preventDefault(); applyFormat('bold'); }
-    if (e.key === 'i') { e.preventDefault(); applyFormat('italic'); }
   }
 });

@@ -418,7 +418,7 @@ input, textarea, [contenteditable], .body-input, .preview {
 .title-input::placeholder { color: var(--text-faint); }
 
 .meta-row { display: flex; gap: 10px; padding: 0 24px 12px; }
-.folder-select, .tags-input {
+.folder-select {
   background: var(--bg-3);
   border: 1px solid var(--border);
   color: var(--text-dim);
@@ -426,10 +426,10 @@ input, textarea, [contenteditable], .body-input, .preview {
   padding: 6px 10px;
   font-size: 12.5px;
   outline: none;
+  cursor: pointer;
+  flex: 1;
 }
-.folder-select { cursor: pointer; }
-.tags-input { flex: 1; }
-.tags-input:focus, .folder-select:focus { border-color: var(--accent); }
+.folder-select:focus { border-color: var(--accent); }
 
 .body-input {
   flex: 1;

@@ -32,10 +32,6 @@
         ⮕ <span data-i18n="join">Beitreten</span>
       </button>
 
-      <button id="aiBtn" class="ai-btn hidden" data-i18n-title="aiListTitle" title="Liste aus einem Satz erstellen">
-        ✨ <span data-i18n="aiList">KI-Liste</span>
-      </button>
-
       <button id="voiceBtn" class="voice-btn hidden" data-i18n-title="voiceNoteTitle" title="Sprachnotiz aufnehmen">
         🎤 <span data-i18n="voiceNote">Sprachnotiz</span>
       </button>
@@ -51,11 +47,6 @@
         </div>
         <ul id="folderList"></ul>
       </nav>
-
-      <div class="tags-section">
-        <div class="folders-head"><span data-i18n="tags">Tags</span></div>
-        <ul id="tagList" class="tag-cloud"></ul>
-      </div>
 
       <button id="accountBtn" class="account-btn" data-i18n-title="backupTitle" data-i18n="backup" title="Notizen sichern">🔒 Notizen sichern</button>
       <div class="bottom-row">
@@ -94,12 +85,6 @@
         <div class="editor-toolbar">
           <div class="toolbar-left">
             <button id="backBtn" class="mobile-only" data-i18n-title="backToListTitle" title="Zurück zur Liste"><span data-i18n="backToList">‹ Liste</span></button>
-            <button data-fmt="bold" data-i18n-title="bold" title="Fett (Strg+B)"><b>B</b></button>
-            <button data-fmt="italic" data-i18n-title="italic" title="Kursiv (Strg+I)"><i>I</i></button>
-            <button data-fmt="h1" data-i18n-title="heading" title="Überschrift">H</button>
-            <button data-fmt="list" data-i18n-title="listFmt" title="Liste">☰</button>
-            <button data-fmt="code" data-i18n-title="code" title="Code">&lt;/&gt;</button>
-            <button id="previewToggle" data-i18n-title="preview" title="Vorschau">👁</button>
           </div>
           <div class="toolbar-right">
             <button id="shareBtn" data-i18n-title="share" title="Teilen">🔗</button>
@@ -128,11 +113,9 @@
 
         <div class="meta-row">
           <select id="folderSelect" class="folder-select"></select>
-          <input id="tagsInput" class="tags-input" type="text" data-i18n-ph="tagsInput" placeholder="Tags (Komma getrennt)…" />
         </div>
 
-        <textarea id="bodyInput" class="body-input" data-i18n-ph="bodyPlaceholder" placeholder="Schreib drauf los… (Markdown wird unterstützt)"></textarea>
-        <div id="preview" class="preview hidden"></div>
+        <textarea id="bodyInput" class="body-input" data-i18n-ph="bodyPlaceholder" placeholder="Notiz schreiben…"></textarea>
 
         <div class="subtasks">
           <div class="subtasks-head">
@@ -238,21 +221,6 @@
         <p class="modal-hint" data-i18n="voiceProcessing">Transkribiere &amp; erstelle Liste…</p>
       </div>
       <div id="voiceError" class="join-error hidden"></div>
-    </div>
-  </div>
-
-  <!-- KI-Liste-Dialog -->
-  <div id="aiModal" class="modal-overlay hidden">
-    <div class="modal">
-      <button class="modal-close" id="aiClose">✕</button>
-      <h2 data-i18n="aiModalTitle">✨ Liste aus einem Satz</h2>
-      <p class="modal-hint" data-i18n="aiModalHint">Beschreibe, was du brauchst – die KI erstellt eine fertige Liste mit Teilaufgaben.</p>
-      <input id="aiInput" class="auth-field" type="text" data-i18n-ph="aiPlaceholder" placeholder="z. B. Wocheneinkauf für 4 Personen" autocomplete="off" />
-      <div id="aiError" class="join-error hidden"></div>
-      <button id="aiSubmit" class="primary-btn" data-i18n="aiCreate">✨ Liste erstellen</button>
-      <div class="ai-examples" data-i18n="aiExamples">
-        Beispiele: „Packliste 3 Tage Berlin", „Putzplan WG", „Geburtstagsparty planen"
-      </div>
     </div>
   </div>
 
