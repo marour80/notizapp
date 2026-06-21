@@ -81,6 +81,59 @@
     return (s || '').replace(/[#*`_>-]/g, '').replace(/\n/g, ' ').trim();
   }
 
+  // ---- Autoren-Spur fürs Textfeld (wer hat welche Zeile geschrieben) ----
+  // bodyLines = [{ text, by, color, name }]. by/color/name = null bei unbekanntem Autor.
+
+  function linesToText(lines) {
+    return (lines || []).map((l) => l.text).join('\n');
+  }
+
+  // Aus reinem Text (z.B. Altbestand) eine Zeilen-Liste ohne Autor machen.
+  function textToLines(text) {
+    return String(text == null ? '' : text)
+      .split('\n')
+      .map((t) => ({ text: t, by: null, color: null, name: null }));
+  }
+
+  // Neuen Text gegen die bisherigen Zeilen abgleichen: unveränderte Zeilen behalten
+  // ihren Autor (per Zeilen-LCS), neue/geänderte Zeilen bekommen den aktuellen Autor.
+  function attributeBody(prevLines, newText, author) {
+    const newTexts = String(newText == null ? '' : newText).split('\n');
+    const prev = prevLines || [];
+    const prevTexts = prev.map((l) => l.text);
+    const n = prevTexts.length;
+    const m = newTexts.length;
+    const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] =
+          prevTexts[i] === newTexts[j]
+            ? dp[i + 1][j + 1] + 1
+            : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const kept = new Array(m).fill(null);
+    let i = 0;
+    let j = 0;
+    while (i < n && j < m) {
+      if (prevTexts[i] === newTexts[j]) {
+        kept[j] = prev[i];
+        i++;
+        j++;
+      } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+        i++;
+      } else {
+        j++;
+      }
+    }
+    const a = author || {};
+    return newTexts.map((text, idx) => {
+      const k = kept[idx];
+      if (k) return { text, by: k.by, color: k.color, name: k.name };
+      return { text, by: a.id || null, color: a.color || null, name: a.nickname || null };
+    });
+  }
+
   function formatDate(ts) {
     if (!ts) return '';
     const d = new Date(ts);
@@ -103,6 +156,9 @@
     makeShareCode,
     escapeHtml,
     stripMd,
-    formatDate
+    formatDate,
+    linesToText,
+    textToLines,
+    attributeBody
   };
 })(typeof window !== 'undefined' ? window : globalThis);

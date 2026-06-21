@@ -14,6 +14,7 @@ const editorEl = $('editor');
 const editorEmptyEl = $('editorEmpty');
 const titleInput = $('titleInput');
 const bodyInput = $('bodyInput');
+const bodyColoredEl = $('bodyColored');
 const folderSelect = $('folderSelect');
 
 // ---- Core aliases (plattformunabhängig, siehe src/core/) ----
@@ -81,6 +82,8 @@ NZStore.onChanged(async (info) => {
       renderSubtasks();
       updateSharedBadge(currentNote());
     }
+    // Text des/der anderen live nachziehen (nur wenn ich nicht gerade selbst tippe).
+    syncBodyFromRemote(currentNote());
   }
 
   // Benachrichtigung, wenn Fenster nicht im Fokus ist.
@@ -237,7 +240,7 @@ function openNote(id) {
   editorEmptyEl.classList.add('hidden');
   editorEl.classList.remove('hidden');
   titleInput.value = note.title || '';
-  bodyInput.value = note.body || '';
+  setupBodyFor(note);
   folderSelect.value = note.folder || '';
   renderStatusRow(note.status || 'todo');
   renderSubtasks();
@@ -254,7 +257,8 @@ function scheduleSave() {
   const note = currentNote();
   if (!note) return;
   note.title = titleInput.value;
-  note.body = bodyInput.value;
+  note.bodyLines = NZ.attributeBody(ensureBodyLines(note), bodyInput.value, NZDevice.me());
+  note.body = NZ.linesToText(note.bodyLines);
   note.folder = folderSelect.value;
   note.updatedAt = Date.now();
   $('savedHint').textContent = t('saving');
@@ -436,6 +440,65 @@ function deleteFolder(name) {
   renderAll();
 }
 
+// ---- Textfeld mit Autoren-Farben (wer hat welche Zeile geschrieben) ----
+// Farbansicht nur bei geteilten Notizen; allein bleibt es ein schlichtes Textfeld.
+function isBodyColored(note) {
+  return !!(note && note.share && note.share.code);
+}
+
+function ensureBodyLines(note) {
+  if (!note) return [];
+  if (!note.bodyLines) note.bodyLines = NZ.textToLines(note.body || '');
+  return note.bodyLines;
+}
+
+function renderBodyColored(note) {
+  ensureBodyLines(note);
+  const lines = note.bodyLines;
+  const empty = !lines.length || (lines.length === 1 && lines[0].text === '');
+  if (empty) {
+    bodyColoredEl.innerHTML = `<div class="body-empty">${escapeHtml(t('bodyPlaceholder'))}</div>`;
+    return;
+  }
+  bodyColoredEl.innerHTML = lines
+    .map((l) => {
+      const text = l.text === '' ? '<br/>' : escapeHtml(l.text);
+      if (l.by && l.color) {
+        const tip = l.name ? t('writtenBy', { who: escapeHtml(l.name) }) : '';
+        return `<div class="bl" style="--c:${l.color}" title="${tip}">${text}</div>`;
+      }
+      return `<div class="bl bl-none">${text}</div>`;
+    })
+    .join('');
+}
+
+// 'edit' = Textfeld zum Tippen, 'view' = farbige Autoren-Ansicht.
+function showBodyMode(mode) {
+  const edit = mode === 'edit';
+  bodyInput.classList.toggle('hidden', !edit);
+  bodyColoredEl.classList.toggle('hidden', edit);
+}
+
+function setupBodyFor(note) {
+  bodyInput.value = note.body || '';
+  ensureBodyLines(note);
+  if (isBodyColored(note)) {
+    renderBodyColored(note);
+    showBodyMode('view');
+    $('bodyHint').classList.remove('hidden');
+  } else {
+    showBodyMode('edit');
+    $('bodyHint').classList.add('hidden');
+  }
+}
+
+// Remote-Änderung am offenen Textfeld übernehmen (nur wenn ich nicht gerade selbst tippe).
+function syncBodyFromRemote(note) {
+  if (document.activeElement === bodyInput) return;
+  bodyInput.value = note.body || '';
+  if (isBodyColored(note)) renderBodyColored(note);
+}
+
 // ---- Theme ----
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
@@ -498,6 +561,7 @@ async function doShare() {
     renderShareState(note);
     renderNoteList();
     updateSharedBadge(note);
+    setupBodyFor(note); // ab jetzt farbige Autoren-Ansicht
   } catch (e) {
     alert(t('shareFailed') + (e.message || e));
   } finally {
@@ -517,6 +581,7 @@ async function doUnshare() {
     renderShareState(note);
     renderNoteList();
     updateSharedBadge(note);
+    setupBodyFor(note); // zurück zum schlichten Textfeld
   } catch (e) {
     alert(t('errGeneric') + (e.message || e));
   }
@@ -863,6 +928,20 @@ if ($('langToggle')) $('langToggle').onclick = toggleLanguage;
 titleInput.oninput = scheduleSave;
 bodyInput.oninput = scheduleSave;
 folderSelect.onchange = scheduleSave;
+
+// Farbansicht antippen → ins Textfeld wechseln; Textfeld verlassen → wieder farbig zeigen.
+bodyColoredEl.onclick = () => {
+  if (!currentNote()) return;
+  showBodyMode('edit');
+  bodyInput.focus();
+};
+bodyInput.addEventListener('blur', () => {
+  const note = currentNote();
+  if (note && isBodyColored(note)) {
+    renderBodyColored(note);
+    showBodyMode('view');
+  }
+});
 
 $('searchInput').oninput = (e) => {
   searchTerm = e.target.value;
