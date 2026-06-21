@@ -69,10 +69,7 @@ NZStore.onChanged(async (info) => {
 
   // Offene Notiz wurde gelöscht?
   if (activeNoteId && !data.notes.find((n) => n.id === activeNoteId)) {
-    activeNoteId = null;
-    leavePresence();
-    editorEl.classList.add('hidden');
-    editorEmptyEl.classList.remove('hidden');
+    closeEditor();
     return;
   }
 
@@ -273,16 +270,22 @@ function scheduleSave() {
   }, 400);
 }
 
+// Editor schließen und zurück zur Liste (wichtig fürs Handy: schließt das Overlay).
+function closeEditor() {
+  activeNoteId = null;
+  leavePresence();
+  editorEl.classList.add('hidden');
+  editorEmptyEl.classList.remove('hidden');
+  document.body.classList.remove('editor-open');
+}
+
 function deleteNote() {
   const note = currentNote();
   if (!note) return;
   if (!confirm(t('deleteNoteConfirm'))) return;
   data.notes = data.notes.filter((n) => n.id !== note.id);
-  activeNoteId = null;
-  leavePresence();
   persist();
-  editorEl.classList.add('hidden');
-  editorEmptyEl.classList.remove('hidden');
+  closeEditor();
   renderAll();
 }
 
