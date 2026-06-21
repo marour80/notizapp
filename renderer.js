@@ -30,6 +30,8 @@ function statusLabel(s) {
 // ---- Init ----
 (async function init() {
   data = await NZStore.load();
+  const ver = (window.NZ_CONFIG && NZ_CONFIG.VERSION) || '';
+  if (ver) $('appVersion').textContent = 'v' + ver;
   applyLanguage(); // setzt statische Texte + Toggle-Label
   const theme = localStorage.getItem('theme') || 'dark';
   applyTheme(theme);
