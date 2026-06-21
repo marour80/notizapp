@@ -67,7 +67,13 @@
     client =
       client ||
       global.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-        auth: { persistSession: true, autoRefreshToken: true, storage: localStorage }
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          storage: localStorage,
+          flowType: 'pkce', // OAuth (Google/Apple) liefert einen Code zum Eintauschen
+          detectSessionInUrl: true // Web: Login-Rückleitung automatisch verarbeiten
+        }
       });
 
     let { data: sess } = await client.auth.getSession();
@@ -320,6 +326,57 @@
     await c.auth.signInAnonymously(); // neue anonyme Identität, App läuft weiter
   }
 
+  // ---- Anmelden mit Google / Apple (OAuth) ----
+  // Web/PWA: Browser leitet weiter und kommt automatisch zurück (detectSessionInUrl).
+  // Native App: System-Browser öffnen, Rückkehr über smartnote://login-callback.
+  async function signInWithOAuthProvider(provider) {
+    const c = await ensureClient();
+    const native = !!(global.NZNative && NZNative.isNative());
+    const webBase = (cfg().WEB_URL) || (global.location && location.origin + location.pathname) || undefined;
+    const redirectTo = native ? 'smartnote://login-callback' : webBase;
+    const { data, error } = await c.auth.signInWithOAuth({
+      provider,
+      options: { redirectTo, skipBrowserRedirect: native }
+    });
+    if (error) throw error;
+    if (native && data && data.url) {
+      // System-Browser öffnen (Capacitor leitet _system an den echten Browser).
+      global.open(data.url, '_system');
+    }
+    return true;
+  }
+  function signInWithGoogle() {
+    return signInWithOAuthProvider('google');
+  }
+  function signInWithApple() {
+    return signInWithOAuthProvider('apple');
+  }
+
+  // Native Rückleitung smartnote://login-callback?code=… → Session herstellen.
+  async function completeOAuth(url) {
+    const c = await ensureClient();
+    let code = null;
+    let hashParams = null;
+    try {
+      const u = new URL(url);
+      code = u.searchParams.get('code');
+      if (u.hash) hashParams = new URLSearchParams(u.hash.replace(/^#/, ''));
+    } catch {}
+    if (code) {
+      const { error } = await c.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+    } else if (hashParams && hashParams.get('access_token')) {
+      const { error } = await c.auth.setSession({
+        access_token: hashParams.get('access_token'),
+        refresh_token: hashParams.get('refresh_token')
+      });
+      if (error) throw error;
+    } else {
+      return false;
+    }
+    return true;
+  }
+
   global.NZSupabase = {
     adapter,
     ensureClient,
@@ -327,7 +384,16 @@
     uid: () => uid
   };
 
-  global.NZAuth = { getAuthInfo, secureWithEmail, signInEmail, signOutUser, lastEmail };
+  global.NZAuth = {
+    getAuthInfo,
+    secureWithEmail,
+    signInEmail,
+    signOutUser,
+    lastEmail,
+    signInWithGoogle,
+    signInWithApple,
+    completeOAuth
+  };
 
   // ---- KI (ruft die Edge Function "claude" auf; Schlüssel bleibt serverseitig) ----
   async function aiInvoke(mode, input) {

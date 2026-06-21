@@ -926,6 +926,7 @@ function renderAuthMode() {
   if (secured) {
     $('authTitle').textContent = t('securedTitle');
     $('authHint').classList.add('hidden');
+    $('oauthRow').classList.add('hidden');
     formIds.forEach((id) => $(id).classList.add('hidden'));
     document.querySelector('.auth-switch').classList.add('hidden');
     $('authSignedIn').classList.remove('hidden');
@@ -933,6 +934,7 @@ function renderAuthMode() {
     return;
   }
   $('authHint').classList.remove('hidden');
+  $('oauthRow').classList.remove('hidden');
   formIds.forEach((id) => $(id).classList.remove('hidden'));
   document.querySelector('.auth-switch').classList.remove('hidden');
   $('authSignedIn').classList.add('hidden');
@@ -1006,6 +1008,34 @@ async function signOutAccount() {
   if (!confirm(t('signOutConfirm'))) return;
   await NZAuth.signOutUser();
   location.reload();
+}
+
+// ---- Anmelden mit Google / Apple ----
+async function signInWithProvider(which) {
+  if (!authAvailable()) return alert(t('backupNeedCloud'));
+  const btn = which === 'apple' ? $('appleSignInBtn') : $('googleSignInBtn');
+  btn.disabled = true;
+  $('authError').classList.add('hidden');
+  try {
+    await (which === 'apple' ? NZAuth.signInWithApple() : NZAuth.signInWithGoogle());
+    // Web: Browser leitet weiter (Seite lädt neu zurück). Native: System-Browser offen,
+    // Rückkehr läuft über onAuthCallback → dort wird neu geladen.
+  } catch (e) {
+    showAuthError(t('oauthFailed') + (e.message || e));
+    btn.disabled = false;
+  }
+}
+
+// Native Rückleitung aus dem Browser (smartnote://login-callback) abschließen.
+if (window.NZNative && NZNative.onAuthCallback) {
+  NZNative.onAuthCallback(async (url) => {
+    try {
+      const ok = await NZAuth.completeOAuth(url);
+      if (ok) location.reload(); // mit dem neuen Konto laden
+    } catch (e) {
+      alert(t('oauthFailed') + (e.message || e));
+    }
+  });
 }
 
 // ---- KI (Einkauf sortieren / Sprachnotiz) ----
@@ -1307,6 +1337,8 @@ document.querySelectorAll('.copy-btn').forEach((btn) => {
 // ---- Konto-Events ----
 $('accountBtn').onclick = openAuth;
 $('authClose').onclick = () => $('authModal').classList.add('hidden');
+$('googleSignInBtn').onclick = () => signInWithProvider('google');
+$('appleSignInBtn').onclick = () => signInWithProvider('apple');
 $('authSubmit').onclick = submitAuth;
 $('authSignout').onclick = signOutAccount;
 $('authSwitchLink').onclick = (e) => {
