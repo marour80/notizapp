@@ -847,7 +847,7 @@ function renderPresence(list) {
 // Desktop-Benachrichtigung bei Änderung einer geteilten Notiz.
 function notifyChange(title) {
   try {
-    new Notification('NotizApp 🔗', {
+    new Notification('SmartNote 🔗', {
       body: title ? t('noteUpdated', { title }) : t('genericUpdated')
     });
   } catch {}
