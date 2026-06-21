@@ -192,22 +192,109 @@ function renderNoteList() {
     const shareHtml = n.share && n.share.code ? '<span class="card-share">🔗</span>' : '';
     const snippet = escapeHtml(stripMd(n.body || ''));
     li.innerHTML = `
-      <div class="card-title-row">
-        <span class="dot dot-${status}" title="${statusLabel(status)}${hasSubs ? ' ' + t('fromSubtasks') : ' ' + t('clickToCycle')}"></span>
-        <h3>${escapeHtml(n.title) || t('untitled')}</h3>
-      </div>
-      <div class="snippet">${snippet || (subs.length ? subs.map((s) => '• ' + escapeHtml(s.text)).join('  ') : t('noContent'))}</div>
-      <div class="card-meta">${shareHtml}${subHtml}<span>${formatDate(n.updatedAt)}</span></div>`;
-    li.querySelector('.dot').onclick = (e) => {
+      <button class="card-delete" aria-label="${t('delete')}" title="${t('delete')}">🗑</button>
+      <div class="card-inner">
+        <div class="card-title-row">
+          <span class="dot dot-${status}" title="${statusLabel(status)}${hasSubs ? ' ' + t('fromSubtasks') : ' ' + t('clickToCycle')}"></span>
+          <h3>${escapeHtml(n.title) || t('untitled')}</h3>
+        </div>
+        <div class="snippet">${snippet || (subs.length ? subs.map((s) => '• ' + escapeHtml(s.text)).join('  ') : t('noContent'))}</div>
+        <div class="card-meta">${shareHtml}${subHtml}<span>${formatDate(n.updatedAt)}</span></div>
+      </div>`;
+    const inner = li.querySelector('.card-inner');
+    inner.querySelector('.dot').onclick = (e) => {
       e.stopPropagation();
+      if (li.classList.contains('swiped')) return closeSwipe(li);
       if (hasSubs) {
         openNote(n.id); // status is auto from subtasks → open to edit them
       } else {
         cycleStatus(n.id);
       }
     };
-    li.onclick = () => openNote(n.id);
+    li.querySelector('.card-delete').onclick = (e) => {
+      e.stopPropagation();
+      deleteNoteById(n.id);
+    };
+    attachSwipe(li, inner, n.id);
     noteListEl.appendChild(li);
+  });
+}
+
+// ---- Wisch-zum-Löschen auf den Notiz-Karten (Handy-typisch) ----
+let openSwipedCard = null;
+
+function closeSwipe(li) {
+  if (li) li.classList.remove('swiped');
+  if (openSwipedCard === li) openSwipedCard = null;
+}
+function closeAllSwipes() {
+  if (openSwipedCard) closeSwipe(openSwipedCard);
+}
+
+function attachSwipe(li, inner, noteId) {
+  let startX = 0;
+  let startY = 0;
+  let dx = 0;
+  let decided = null; // 'h' | 'v'
+  let active = false;
+  let suppressClick = false;
+
+  inner.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    active = true;
+    decided = null;
+    dx = 0;
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+
+  inner.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    const mx = e.clientX - startX;
+    const my = e.clientY - startY;
+    if (decided === null) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      decided = Math.abs(mx) > Math.abs(my) ? 'h' : 'v';
+      if (decided === 'h') {
+        if (openSwipedCard && openSwipedCard !== li) closeSwipe(openSwipedCard);
+        li.classList.add('dragging');
+        try { inner.setPointerCapture(e.pointerId); } catch {}
+      }
+    }
+    if (decided !== 'h') return;
+    suppressClick = true;
+    const base = li.classList.contains('swiped') ? -86 : 0;
+    dx = Math.max(-100, Math.min(0, base + mx));
+    inner.style.transform = 'translateX(' + dx + 'px)';
+    e.preventDefault();
+  });
+
+  const end = () => {
+    if (!active) return;
+    active = false;
+    li.classList.remove('dragging');
+    inner.style.transform = '';
+    if (decided === 'h') {
+      if (dx < -43) {
+        li.classList.add('swiped');
+        openSwipedCard = li;
+      } else {
+        closeSwipe(li);
+      }
+    }
+  };
+  inner.addEventListener('pointerup', end);
+  inner.addEventListener('pointercancel', end);
+
+  inner.addEventListener('click', (e) => {
+    if (suppressClick) {
+      suppressClick = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (li.classList.contains('swiped')) return closeSwipe(li);
+    openNote(noteId);
   });
 }
 
@@ -233,6 +320,7 @@ function newNote() {
 function openNote(id) {
   const note = data.notes.find((n) => n.id === id);
   if (!note) return;
+  closeAllSwipes();
   activeNoteId = id;
   document.body.classList.add('editor-open'); // Handy: Editor-Ebene einblenden
   setNav(false);
@@ -286,6 +374,15 @@ function deleteNote() {
   data.notes = data.notes.filter((n) => n.id !== note.id);
   persist();
   closeEditor();
+  renderAll();
+}
+
+// Direkt aus der Liste löschen (per Wischen) – ohne Editor, ohne Extra-Bestätigung.
+function deleteNoteById(id) {
+  data.notes = data.notes.filter((n) => n.id !== id);
+  if (openSwipedCard) openSwipedCard = null;
+  if (activeNoteId === id) closeEditor();
+  persist();
   renderAll();
 }
 
