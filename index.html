@@ -226,6 +226,16 @@
     </div>
   </div>
 
+  <!-- Foto pro Teilaufgabe (verstecktes Datei-Feld + Vollbild-Ansicht) -->
+  <input id="subPhotoInput" type="file" accept="image/*" class="hidden" />
+  <div id="photoModal" class="modal-overlay hidden">
+    <div class="photo-view">
+      <button class="modal-close" id="photoClose">✕</button>
+      <img id="photoImg" alt="" />
+      <button id="photoRemove" class="danger-btn" data-i18n="removePhoto">Foto entfernen</button>
+    </div>
+  </div>
+
   <script src="core/config.js"></script>
   <script src="vendor/supabase.js"></script>
   <script src="vendor/qrcode.js"></script>

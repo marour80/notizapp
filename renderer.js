@@ -329,7 +329,9 @@ function renderSubtasks() {
     li.innerHTML = `
       <span class="dot dot-${status}" title="${statusLabel(status)} ${t('clickToCycle')}"></span>
       <input class="sub-text" type="text" value="" />
-      ${noteShared ? whoBadge(st) : ''}
+      ${st.photo ? `<img class="sub-thumb" src="${st.photo}" alt="" />` : ''}
+      ${noteShared ? whoBadge(note, st) : ''}
+      <button class="sub-photo" title="${t(st.photo ? 'photo' : 'addPhoto')}">📷</button>
       <button class="sub-del" title="${t('deleteSubtask')}">✕</button>`;
     const input = li.querySelector('.sub-text');
     input.value = st.text || '';
@@ -345,6 +347,9 @@ function renderSubtasks() {
         $('subAddInput').focus();
       }
     };
+    li.querySelector('.sub-photo').onclick = () => pickSubtaskPhoto(st.id);
+    const thumb = li.querySelector('.sub-thumb');
+    if (thumb) thumb.onclick = () => openPhoto(st.id);
     li.querySelector('.sub-del').onclick = () => deleteSubtask(st.id);
     listEl.appendChild(li);
   });
@@ -399,11 +404,11 @@ function cycleSubtask(stId) {
   renderNoteList();
 }
 
-function whoBadge(st) {
+function whoBadge(note, st) {
   if (!st.updatedBy) return '';
   const mine = st.updatedBy.id === NZDevice.getId();
   const who = mine ? t('you') : st.updatedBy.nickname || t('someone');
-  const color = st.updatedBy.color || 'var(--text-faint)';
+  const color = NZ.noteColorFor(note, st.updatedBy.id) || st.updatedBy.color || 'var(--text-faint)';
   return `<span class="sub-who" style="color:${color}" title="${t('lastChangedBy', { who: escapeHtml(who) })}">● ${escapeHtml(who)}</span>`;
 }
 
@@ -416,6 +421,94 @@ function deleteSubtask(stId) {
   persist();
   renderSubtasks();
   renderNoteList();
+}
+
+// ---- Foto pro Teilaufgabe (optional) ----
+let photoTargetId = null;
+
+function findSub(stId) {
+  const note = currentNote();
+  return note && (note.subtasks || []).find((s) => s.id === stId);
+}
+
+function pickSubtaskPhoto(stId) {
+  photoTargetId = stId;
+  const inp = $('subPhotoInput');
+  inp.value = '';
+  inp.click();
+}
+
+async function onSubPhotoChosen(file) {
+  const st = findSub(photoTargetId);
+  if (!file || !st) return;
+  try {
+    st.photo = await downscaleImage(file, 900, 0.5);
+    st.updatedBy = NZDevice.me();
+    st.updatedAt = Date.now();
+    const note = currentNote();
+    note.updatedAt = Date.now();
+    persist();
+    renderSubtasks();
+  } catch (e) {
+    alert(t('photoFailed') + (e.message || e));
+  }
+}
+
+// Bild verkleinern & als JPEG-DataURL zurückgeben (klein halten → synct mit der Notiz).
+function downscaleImage(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let w = img.width;
+        let h = img.height;
+        if (w > h && w > maxDim) {
+          h = Math.round((h * maxDim) / w);
+          w = maxDim;
+        } else if (h > maxDim) {
+          w = Math.round((w * maxDim) / h);
+          h = maxDim;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        let q = quality;
+        let url = canvas.toDataURL('image/jpeg', q);
+        while (url.length > 220000 && q > 0.3) {
+          q -= 0.1;
+          url = canvas.toDataURL('image/jpeg', q);
+        }
+        resolve(url);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function openPhoto(stId) {
+  const st = findSub(stId);
+  if (!st || !st.photo) return;
+  photoTargetId = stId;
+  $('photoImg').src = st.photo;
+  $('photoModal').classList.remove('hidden');
+}
+
+function removePhoto() {
+  const st = findSub(photoTargetId);
+  if (st) {
+    st.photo = null;
+    st.updatedAt = Date.now();
+    const note = currentNote();
+    if (note) note.updatedAt = Date.now();
+    persist();
+    renderSubtasks();
+  }
+  $('photoModal').classList.add('hidden');
 }
 
 // ---- Folders ----
@@ -463,9 +556,10 @@ function renderBodyColored(note) {
   bodyColoredEl.innerHTML = lines
     .map((l) => {
       const text = l.text === '' ? '<br/>' : escapeHtml(l.text);
-      if (l.by && l.color) {
+      const color = NZ.noteColorFor(note, l.by) || l.color;
+      if (l.by && color) {
         const tip = l.name ? t('writtenBy', { who: escapeHtml(l.name) }) : '';
-        return `<div class="bl" style="--c:${l.color}" title="${tip}">${text}</div>`;
+        return `<div class="bl" style="--c:${color}" title="${tip}">${text}</div>`;
       }
       return `<div class="bl bl-none">${text}</div>`;
     })
@@ -557,6 +651,7 @@ async function doShare() {
   try {
     await window.NZShare.shareNote(note);
     note.shared = true;
+    NZ.claimNoteColor(note, NZDevice.getId()); // feste Farbe für diese Notiz
     persist();
     renderShareState(note);
     renderNoteList();
@@ -617,8 +712,9 @@ function renderPresence(list) {
     row.classList.add('hidden');
     return;
   }
+  const note = currentNote();
   const dots = people
-    .map((p) => `<span class="pres-dot" style="background:${p.color || '#888'}" title="${escapeHtml(p.nickname || '')}"></span>`)
+    .map((p) => `<span class="pres-dot" style="background:${NZ.noteColorFor(note, p.id) || p.color || '#888'}" title="${escapeHtml(p.nickname || '')}"></span>`)
     .join('');
   row.innerHTML = `${dots}<span class="pres-text">${t('online', { n: people.length })}</span>`;
   row.classList.remove('hidden');
@@ -664,6 +760,11 @@ async function doJoin() {
       return;
     }
     data = await NZStore.load();
+    const joined = data.notes.find((n) => n.id === noteId);
+    if (joined && joined.share) {
+      NZ.claimNoteColor(joined, NZDevice.getId()); // eigene feste Farbe für diese Notiz
+      persist();
+    }
     renderAll();
     showJoinModal(false);
     openNote(noteId);
@@ -958,6 +1059,14 @@ $('subAddInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') submitSubtask();
 });
 $('subAddBtn').onclick = submitSubtask;
+
+// Foto pro Teilaufgabe
+$('subPhotoInput').onchange = (e) => onSubPhotoChosen(e.target.files && e.target.files[0]);
+$('photoClose').onclick = () => $('photoModal').classList.add('hidden');
+$('photoRemove').onclick = removePhoto;
+$('photoModal').addEventListener('click', (e) => {
+  if (e.target === $('photoModal')) $('photoModal').classList.add('hidden');
+});
 
 document.querySelectorAll('.status-opt').forEach((btn) => {
   btn.onclick = () => {

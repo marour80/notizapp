@@ -60,7 +60,39 @@
   }
 
   function makeSubtask(text, by) {
-    return { id: uid(), text: text || '', status: 'todo', updatedBy: by || null, updatedAt: Date.now() };
+    return { id: uid(), text: text || '', status: 'todo', updatedBy: by || null, updatedAt: Date.now(), photo: null };
+  }
+
+  // ---- Feste Farbe pro Person für EINE geteilte Notiz ----
+  // Beim Teilen/Beitreten bekommt jedes Gerät genau eine Farbe aus der Palette,
+  // gespeichert in note.share.colors = { deviceId: farbe }. So sind Farben stabil
+  // und kollidieren innerhalb einer Notiz nicht.
+  const SHARE_PALETTE = ['#7c6cff', '#3ad17a', '#ff9f43', '#ff5c72', '#21b8c7', '#e056fd', '#ffd93b', '#4f8cff'];
+
+  function noteColorFor(note, deviceId) {
+    return (note && note.share && note.share.colors && note.share.colors[deviceId]) || null;
+  }
+
+  function claimNoteColor(note, deviceId) {
+    if (!note || !note.share || !deviceId) return null;
+    if (!note.share.colors) note.share.colors = {};
+    const colors = note.share.colors;
+    if (colors[deviceId]) return colors[deviceId];
+    const taken = new Set(Object.values(colors));
+    // Startversatz aus der Geräte-ID → zwei gleichzeitige Beitritte greifen seltener dieselbe Farbe.
+    let off = 0;
+    for (let i = 0; i < deviceId.length; i++) off = (off + deviceId.charCodeAt(i)) % SHARE_PALETTE.length;
+    let chosen = null;
+    for (let k = 0; k < SHARE_PALETTE.length; k++) {
+      const c = SHARE_PALETTE[(off + k) % SHARE_PALETTE.length];
+      if (!taken.has(c)) {
+        chosen = c;
+        break;
+      }
+    }
+    if (!chosen) chosen = SHARE_PALETTE[off % SHARE_PALETTE.length]; // mehr Leute als Farben → wiederverwenden
+    colors[deviceId] = chosen;
+    return chosen;
   }
 
   // Einprägsamer Teilen-Code, z.B. "OTTER-734".
@@ -159,6 +191,9 @@
     formatDate,
     linesToText,
     textToLines,
-    attributeBody
+    attributeBody,
+    SHARE_PALETTE,
+    noteColorFor,
+    claimNoteColor
   };
 })(typeof window !== 'undefined' ? window : globalThis);
