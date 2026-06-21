@@ -81,6 +81,8 @@
       online: '{n} online',
       noteUpdated: '„{title}" wurde aktualisiert.',
       genericUpdated: 'Eine geteilte Notiz wurde aktualisiert.',
+      toastUpdated: '🔔 „{title}" wurde aktualisiert',
+      toastUpdatedBy: '🔔 {who} hat „{title}" bearbeitet',
       // Teilen
       shareNote: '🔗 Notiz teilen',
       oneMoment: 'Einen Moment…',
@@ -231,6 +233,8 @@
       online: '{n} online',
       noteUpdated: '“{title}” was updated.',
       genericUpdated: 'A shared note was updated.',
+      toastUpdated: '🔔 “{title}” was updated',
+      toastUpdatedBy: '🔔 {who} edited “{title}”',
       shareNote: '🔗 Share note',
       oneMoment: 'One moment…',
       shareHintUnshared: 'Share this note so others can edit it live — no account needed.',

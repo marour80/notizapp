@@ -27,6 +27,58 @@ function statusLabel(s) {
   return t({ todo: 'statusTodo', doing: 'statusDoing', done: 'statusDone' }[s] || 'statusTodo');
 }
 
+// ---- In-App-Hinweise (Toast) ----
+function showToast(msg, color) {
+  const host = $('toastHost');
+  if (!host) return;
+  const el = document.createElement('div');
+  el.className = 'toast';
+  const c = color || 'var(--accent)';
+  el.innerHTML = `<span class="toast-dot" style="background:${c}"></span><span>${escapeHtml(msg)}</span>`;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
+  }, 3600);
+}
+
+// Wer hat die Notiz zuletzt geändert? Aus den Daten abgeleitet (nicht ich selbst).
+function actorOfNote(note) {
+  if (!note) return null;
+  const myId = NZDevice.getId();
+  let best = null;
+  let bestT = -1;
+  (note.subtasks || []).forEach((s) => {
+    const u = s.updatedBy;
+    if (u && u.id && u.id !== myId && (s.updatedAt || 0) >= bestT) {
+      bestT = s.updatedAt || 0;
+      best = u;
+    }
+  });
+  if (!best) {
+    (note.bodyLines || []).forEach((l) => {
+      if (!best && l.by && l.by !== myId && l.name) best = { id: l.by, nickname: l.name, color: l.color };
+    });
+  }
+  return best;
+}
+
+// Hinweis anzeigen, wenn jemand anderes eine GETEILTE Notiz ändert (mit Throttle).
+const toastLast = {};
+function notifyShared(info) {
+  if (!info || !info.id || info.event === 'DELETE') return;
+  const note = data.notes.find((n) => n.id === info.id);
+  if (!note || !(note.share && note.share.code)) return; // nur geteilte Notizen
+  const now = Date.now();
+  if (toastLast[info.id] && now - toastLast[info.id] < 4000) return;
+  toastLast[info.id] = now;
+  const actor = actorOfNote(note);
+  const title = (info.title || '').trim() || t('untitled');
+  if (actor) showToast(t('toastUpdatedBy', { who: actor.nickname || t('someone'), title }), actor.color);
+  else showToast(t('toastUpdated', { title }));
+}
+
 // ---- Init ----
 (async function init() {
   data = await NZStore.load();
@@ -85,7 +137,10 @@ NZStore.onChanged(async (info) => {
     syncBodyFromRemote(currentNote());
   }
 
-  // Benachrichtigung, wenn Fenster nicht im Fokus ist.
+  // In-App-Hinweis: jemand arbeitet an einer geteilten Notiz.
+  notifyShared(info);
+
+  // Zusätzlich System-Benachrichtigung, wenn das Fenster nicht im Fokus ist.
   if (info && info.id && !document.hasFocus()) {
     notifyChange(info.title);
   }
