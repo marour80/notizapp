@@ -433,24 +433,46 @@ function findSub(stId) {
   return note && (note.subtasks || []).find((s) => s.id === stId);
 }
 
-function pickSubtaskPhoto(stId) {
+async function pickSubtaskPhoto(stId) {
   photoTargetId = stId;
+  // Handy-App: nativer Dialog „Foto aufnehmen / Aus Galerie".
+  if (window.NZNative && NZNative.cameraAvailable && NZNative.cameraAvailable()) {
+    try {
+      const dataUrl = await NZNative.takePhoto({
+        header: t('photoHeader'),
+        camera: t('takePhoto'),
+        gallery: t('fromGallery'),
+        cancel: t('cancel')
+      });
+      if (dataUrl) storeSubtaskPhoto(stId, dataUrl);
+    } catch (e) {
+      const msg = (e && e.message) || '';
+      if (!/cancel/i.test(msg) && msg !== 'no-camera') alert(t('photoFailed') + msg);
+    }
+    return;
+  }
+  // Web/Desktop: Datei-Dialog (am Handy bietet der Browser dort meist auch die Kamera an).
   const inp = $('subPhotoInput');
   inp.value = '';
   inp.click();
 }
 
+function storeSubtaskPhoto(stId, dataUrl) {
+  const st = findSub(stId);
+  if (!st || !dataUrl) return;
+  st.photo = dataUrl;
+  st.updatedBy = NZDevice.me();
+  st.updatedAt = Date.now();
+  const note = currentNote();
+  if (note) note.updatedAt = Date.now();
+  persist();
+  renderSubtasks();
+}
+
 async function onSubPhotoChosen(file) {
-  const st = findSub(photoTargetId);
-  if (!file || !st) return;
+  if (!file || !findSub(photoTargetId)) return;
   try {
-    st.photo = await downscaleImage(file, 900, 0.5);
-    st.updatedBy = NZDevice.me();
-    st.updatedAt = Date.now();
-    const note = currentNote();
-    note.updatedAt = Date.now();
-    persist();
-    renderSubtasks();
+    storeSubtaskPhoto(photoTargetId, await downscaleImage(file, 900, 0.5));
   } catch (e) {
     alert(t('photoFailed') + (e.message || e));
   }
