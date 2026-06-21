@@ -964,6 +964,24 @@ let mediaRecorder = null;
 let audioChunks = [];
 let voiceTimer = null;
 let voiceSeconds = 0;
+let voiceTargetId = null; // null = neue Notiz; sonst füllt es diese offene Notiz
+
+// Ergebnis in eine bestehende, offene Notiz einfüllen (Titel nur wenn leer; Punkte anhängen).
+function fillNoteFromVoice(noteId, title, items) {
+  const note = data.notes.find((n) => n.id === noteId);
+  if (!note) return createNoteFromAI(title, items);
+  if (!note.title || !note.title.trim()) note.title = title || '';
+  if (!note.subtasks) note.subtasks = [];
+  (items || []).forEach((text) => note.subtasks.push(NZ.makeSubtask(text, NZDevice.me())));
+  applyAutoStatus(note);
+  note.updatedAt = Date.now();
+  persist();
+  if (activeNoteId === noteId) {
+    titleInput.value = note.title || '';
+    renderSubtasks();
+  }
+  renderNoteList();
+}
 
 function micSupported() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
@@ -973,8 +991,9 @@ function showVoiceError(msg) {
   $('voiceError').classList.remove('hidden');
 }
 
-async function startVoice() {
+async function startVoice(targetId) {
   if (!aiAvailable()) return;
+  voiceTargetId = typeof targetId === 'string' ? targetId : null;
   $('voiceError').classList.add('hidden');
   $('voiceProcessing').classList.add('hidden');
   $('voiceRecording').classList.remove('hidden');
@@ -1030,7 +1049,11 @@ async function processVoice(blob) {
     fd.append('file', blob, 'audio.' + ext);
     const res = await NZAI.voice(fd);
     $('voiceModal').classList.add('hidden');
-    createNoteFromAI(res.title, res.items);
+    if (voiceTargetId && data.notes.find((n) => n.id === voiceTargetId)) {
+      fillNoteFromVoice(voiceTargetId, res.title, res.items);
+    } else {
+      createNoteFromAI(res.title, res.items);
+    }
   } catch (e) {
     $('voiceProcessing').classList.add('hidden');
     showVoiceError(t('errGeneric') + (e.message || e));
@@ -1040,7 +1063,8 @@ async function processVoice(blob) {
 // ---- Events ----
 $('newNoteBtn').onclick = newNote;
 $('fabNew').onclick = newNote;
-$('voiceBtn').onclick = startVoice;
+$('voiceBtn').onclick = () => startVoice(null);
+$('editVoiceBtn').onclick = () => startVoice(activeNoteId);
 $('voiceStop').onclick = stopVoice;
 $('voiceClose').onclick = closeVoice;
 $('sortBtn').onclick = aiSort;
@@ -1199,7 +1223,10 @@ $('authModal').addEventListener('click', (e) => {
 NZStore.ready.then(async () => {
   await updateAccountUI();
   if (window.NZAI && NZAI.available() && NZStore.kind === 'supabase') {
-    if (micSupported()) $('voiceBtn').classList.remove('hidden');
+    if (micSupported()) {
+      $('voiceBtn').classList.remove('hidden');
+      $('editVoiceBtn').classList.remove('hidden');
+    }
   }
   // Falls von iOS abgemeldet, aber E-Mail bekannt → freundlich zum Anmelden auffordern
   const remembered = window.NZAuth && NZAuth.lastEmail ? NZAuth.lastEmail() : null;
