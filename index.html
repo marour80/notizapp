@@ -155,6 +155,11 @@
           <input id="inviteUser" type="text" placeholder="@name" autocomplete="off" autocapitalize="none" />
           <button id="inviteSendBtn" class="primary-btn" data-i18n="inviteSend">Senden</button>
         </div>
+        <div id="friendsShare" class="friends-share hidden">
+          <label data-i18n="shareWithFriend">Mit einem Freund teilen (tippen)</label>
+          <div id="friendChips" class="friend-chips"></div>
+        </div>
+        <button id="manageFriendsBtn" class="link-btn" data-i18n="manageFriends">👥 Freunde verwalten</button>
         <div id="inviteMsg" class="invite-msg hidden"></div>
       </div>
       <div class="auth-or"><span data-i18n="authOr">oder</span></div>
@@ -236,6 +241,21 @@
         <p class="modal-hint" id="authSignedInText"></p>
         <button id="authSignout" class="danger-btn" data-i18n="signOut">Abmelden</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Freunde verwalten -->
+  <div id="friendsModal" class="modal-overlay hidden">
+    <div class="modal">
+      <button class="modal-close" id="friendsClose">✕</button>
+      <h2 data-i18n="friendsTitle">👥 Freunde</h2>
+      <label data-i18n="addFriend">Freund hinzufügen (@Name)</label>
+      <div class="copy-row">
+        <input id="addFriendInput" type="text" placeholder="@name" autocomplete="off" autocapitalize="none" />
+        <button id="addFriendBtn" class="primary-btn" data-i18n="add">Hinzufügen</button>
+      </div>
+      <div id="addFriendMsg" class="invite-msg hidden"></div>
+      <ul id="friendsList" class="friends-list"></ul>
     </div>
   </div>
 

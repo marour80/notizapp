@@ -522,6 +522,43 @@
     savePushToken
   };
 
+  // ---- Freundesliste (private Kontakte) ----
+  async function listFriends() {
+    const c = await ensureClient();
+    const { data } = await c
+      .from('friends')
+      .select('friend_uid, alias, friend_username')
+      .eq('owner', uid)
+      .order('created_at', { ascending: true });
+    return data || [];
+  }
+
+  async function addFriend(name, alias) {
+    const c = await ensureClient();
+    const user = await findUser(name);
+    if (!user) throw new Error('not-found');
+    if (user.uid === uid) throw new Error('self');
+    const { error } = await c.from('friends').upsert({
+      owner: uid,
+      friend_uid: user.uid,
+      alias: (alias && alias.trim()) || user.display_name || user.username,
+      friend_username: user.username
+    });
+    if (error) throw error;
+    return user;
+  }
+
+  async function setFriendAlias(friendUid, alias) {
+    const c = await ensureClient();
+    await c.from('friends').update({ alias: (alias || '').trim() || null }).eq('owner', uid).eq('friend_uid', friendUid);
+  }
+
+  async function removeFriend(friendUid) {
+    const c = await ensureClient();
+    await c.from('friends').delete().eq('owner', uid).eq('friend_uid', friendUid);
+  }
+
   global.NZProfile = { getMyProfile, setUsername, findUser, cleanUsername };
   global.NZInvites = { sendInvite, pendingInvites, acceptInvite, declineInvite, onInvites };
+  global.NZFriends = { listFriends, addFriend, setFriendAlias, removeFriend };
 })(typeof window !== 'undefined' ? window : globalThis);

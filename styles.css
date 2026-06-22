@@ -990,6 +990,56 @@ input, textarea, [contenteditable], .body-input, .preview {
 #inviteUser:focus, #usernameInput:focus { border-color: var(--accent); }
 .invite-box .primary-btn, .profile-box .primary-btn { width: auto; padding: 10px 16px; flex: 0 0 auto; }
 
+/* Freunde */
+.friends-share { margin-top: 10px; }
+.friend-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.friend-chip {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 16px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.friend-chip:hover { border-color: var(--accent); }
+.friend-chip:active { transform: scale(0.97); }
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 8px 0 2px;
+}
+.link-btn:hover { text-decoration: underline; }
+.friends-list { list-style: none; margin-top: 14px; max-height: 46vh; overflow-y: auto; }
+.friends-empty { color: var(--text-faint); font-size: 13px; text-align: center; padding: 16px 0; }
+.friend-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.friend-row .friend-alias {
+  flex: 1;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  outline: none;
+}
+.friend-row .friend-alias:focus { border-color: var(--accent); }
+.friend-row .friend-handle { font-size: 11.5px; color: var(--text-faint); white-space: nowrap; }
+.friend-row .friend-del {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 6px;
+}
+.friend-row .friend-del:hover { color: var(--danger); }
+
 /* ---- Mobile / Responsive ---- */
 .mobile-only { display: none; }
 .icon-btn {

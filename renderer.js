@@ -822,6 +822,7 @@ async function openShare() {
   renderShareState(note);
   $('inviteUser').value = '';
   $('inviteMsg').classList.add('hidden');
+  renderFriendChips();
 }
 
 // ---- Teilen per @Nutzername (Anfrage senden) ----
@@ -831,11 +832,31 @@ function showSmallMsg(el, text, isErr) {
   el.classList.remove('hidden');
 }
 
-async function sendInviteToUser() {
+// Einladung an eine konkrete uid senden (von @Name-Eingabe ODER Freund-Chip).
+async function doSendInvite(toUid, label) {
   const note = currentNote();
   const msg = $('inviteMsg');
-  msg.classList.add('hidden');
   if (!note || !cloudReady() || !window.NZInvites) return;
+  try {
+    const myProfile = await NZProfile.getMyProfile();
+    const fromName = myProfile && myProfile.username ? '@' + myProfile.username : NZDevice.me().nickname;
+    await NZInvites.sendInvite(note, toUid, fromName);
+    note.shared = true;
+    persist();
+    renderShareState(note);
+    renderNoteList();
+    updateSharedBadge(note);
+    setupBodyFor(note);
+    showSmallMsg(msg, t('inviteSent', { name: label || '' }), false);
+  } catch (e) {
+    showSmallMsg(msg, e.message === 'self' ? t('inviteSelf') : t('errGeneric') + (e.message || e), true);
+  }
+}
+
+async function sendInviteToUser() {
+  const msg = $('inviteMsg');
+  msg.classList.add('hidden');
+  if (!cloudReady() || !window.NZProfile) return;
   if (!NZProfile.cleanUsername($('inviteUser').value)) return showSmallMsg(msg, t('inviteNeedName'), true);
   $('inviteSendBtn').disabled = true;
   try {
@@ -844,21 +865,97 @@ async function sendInviteToUser() {
       showSmallMsg(msg, t('inviteUserNotFound'), true);
       return;
     }
-    const myProfile = await NZProfile.getMyProfile();
-    const fromName = myProfile && myProfile.username ? '@' + myProfile.username : NZDevice.me().nickname;
-    await NZInvites.sendInvite(note, user.uid, fromName);
-    note.shared = true;
-    persist();
-    renderShareState(note);
-    renderNoteList();
-    updateSharedBadge(note);
-    setupBodyFor(note);
-    showSmallMsg(msg, t('inviteSent', { name: user.username }), false);
+    await doSendInvite(user.uid, '@' + user.username);
     $('inviteUser').value = '';
-  } catch (e) {
-    showSmallMsg(msg, e.message === 'self' ? t('inviteSelf') : t('errGeneric') + (e.message || e), true);
   } finally {
     $('inviteSendBtn').disabled = false;
+  }
+}
+
+// ---- Freundesliste ----
+function friendLabel(f) {
+  return (f.alias && f.alias.trim()) || '@' + (f.friend_username || '?');
+}
+async function renderFriendChips() {
+  if (!window.NZFriends || !cloudReady()) {
+    $('friendsShare').classList.add('hidden');
+    return;
+  }
+  let friends = [];
+  try {
+    friends = await NZFriends.listFriends();
+  } catch {}
+  const box = $('friendChips');
+  box.innerHTML = '';
+  $('friendsShare').classList.toggle('hidden', friends.length === 0);
+  friends.forEach((f) => {
+    const b = document.createElement('button');
+    b.className = 'friend-chip';
+    b.textContent = friendLabel(f);
+    b.onclick = () => {
+      $('inviteMsg').classList.add('hidden');
+      doSendInvite(f.friend_uid, friendLabel(f));
+    };
+    box.appendChild(b);
+  });
+}
+
+function openFriends() {
+  if (!cloudReady()) return alert(t('needCloud'));
+  $('addFriendInput').value = '';
+  $('addFriendMsg').classList.add('hidden');
+  renderFriendsList();
+  $('friendsModal').classList.remove('hidden');
+}
+async function renderFriendsList() {
+  const ul = $('friendsList');
+  ul.innerHTML = '';
+  let friends = [];
+  try {
+    friends = await NZFriends.listFriends();
+  } catch {}
+  if (!friends.length) {
+    ul.innerHTML = `<li class="friends-empty">${escapeHtml(t('noFriends'))}</li>`;
+    return;
+  }
+  friends.forEach((f) => {
+    const li = document.createElement('li');
+    li.className = 'friend-row';
+    li.innerHTML = `
+      <input class="friend-alias" type="text" />
+      <span class="friend-handle">@${escapeHtml(f.friend_username || '')}</span>
+      <button class="friend-del" title="${t('remove')}">✕</button>`;
+    const inp = li.querySelector('.friend-alias');
+    inp.value = f.alias || '';
+    inp.placeholder = t('aliasPlaceholder');
+    inp.onchange = async () => {
+      await NZFriends.setFriendAlias(f.friend_uid, inp.value);
+      renderFriendChips();
+    };
+    li.querySelector('.friend-del').onclick = async () => {
+      await NZFriends.removeFriend(f.friend_uid);
+      renderFriendsList();
+      renderFriendChips();
+    };
+    ul.appendChild(li);
+  });
+}
+async function addFriendFromInput() {
+  const msg = $('addFriendMsg');
+  msg.classList.add('hidden');
+  if (!window.NZProfile || !NZProfile.cleanUsername($('addFriendInput').value)) return;
+  $('addFriendBtn').disabled = true;
+  try {
+    await NZFriends.addFriend($('addFriendInput').value);
+    $('addFriendInput').value = '';
+    renderFriendsList();
+    renderFriendChips();
+  } catch (e) {
+    const m =
+      e.message === 'not-found' ? t('inviteUserNotFound') : e.message === 'self' ? t('inviteSelf') : t('errGeneric') + (e.message || e);
+    showSmallMsg(msg, m, true);
+  } finally {
+    $('addFriendBtn').disabled = false;
   }
 }
 
@@ -1535,6 +1632,15 @@ $('inviteAccept').onclick = acceptCurrentInvite;
 $('inviteDecline').onclick = declineCurrentInvite;
 $('inviteUser').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendInviteToUser();
+});
+$('manageFriendsBtn').onclick = openFriends;
+$('addFriendBtn').onclick = addFriendFromInput;
+$('friendsClose').onclick = () => $('friendsModal').classList.add('hidden');
+$('addFriendInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addFriendFromInput();
+});
+$('friendsModal').addEventListener('click', (e) => {
+  if (e.target === $('friendsModal')) $('friendsModal').classList.add('hidden');
 });
 $('usernameInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') saveUsername();
