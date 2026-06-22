@@ -903,6 +903,7 @@ async function renderFriendChips() {
 function openFriends() {
   if (!cloudReady()) return alert(t('needCloud'));
   $('addFriendInput').value = '';
+  $('addFriendAlias').value = '';
   $('addFriendMsg').classList.add('hidden');
   renderFriendsList();
   $('friendsModal').classList.remove('hidden');
@@ -946,8 +947,9 @@ async function addFriendFromInput() {
   if (!window.NZProfile || !NZProfile.cleanUsername($('addFriendInput').value)) return;
   $('addFriendBtn').disabled = true;
   try {
-    await NZFriends.addFriend($('addFriendInput').value);
+    await NZFriends.addFriend($('addFriendInput').value, $('addFriendAlias').value);
     $('addFriendInput').value = '';
+    $('addFriendAlias').value = '';
     renderFriendsList();
     renderFriendChips();
   } catch (e) {
@@ -1634,7 +1636,11 @@ $('inviteUser').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendInviteToUser();
 });
 $('manageFriendsBtn').onclick = openFriends;
+$('friendsBtn').onclick = openFriends;
 $('addFriendBtn').onclick = addFriendFromInput;
+$('addFriendAlias').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addFriendFromInput();
+});
 $('friendsClose').onclick = () => $('friendsModal').classList.add('hidden');
 $('addFriendInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addFriendFromInput();
@@ -1654,6 +1660,7 @@ NZStore.ready.then(async () => {
       $('editVoiceBtn').classList.remove('hidden');
     }
   }
+  if (NZStore.kind === 'supabase' && window.NZFriends) $('friendsBtn').classList.remove('hidden');
   // Eingehende Notiz-Anfragen: offene laden + live lauschen.
   if (authAvailable() && window.NZInvites) {
     try {

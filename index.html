@@ -33,6 +33,10 @@
         ⮕ <span data-i18n="join">Beitreten</span>
       </button>
 
+      <button id="friendsBtn" class="join-btn hidden" data-i18n-title="friendsTitle" title="Freunde">
+        👥 <span data-i18n="friends">Freunde</span>
+      </button>
+
       <button id="voiceBtn" class="voice-btn hidden" data-i18n-title="voiceNoteTitle" title="Sprachnotiz aufnehmen">
         🎤 <span data-i18n="voiceNote">Sprachnotiz</span>
       </button>
@@ -249,11 +253,11 @@
     <div class="modal">
       <button class="modal-close" id="friendsClose">✕</button>
       <h2 data-i18n="friendsTitle">👥 Freunde</h2>
-      <label data-i18n="addFriend">Freund hinzufügen (@Name)</label>
-      <div class="copy-row">
-        <input id="addFriendInput" type="text" placeholder="@name" autocomplete="off" autocapitalize="none" />
-        <button id="addFriendBtn" class="primary-btn" data-i18n="add">Hinzufügen</button>
-      </div>
+      <label data-i18n="addFriendName">Sein @Name (wie er sich nennt)</label>
+      <input id="addFriendInput" class="auth-field" type="text" placeholder="@name" autocomplete="off" autocapitalize="none" />
+      <label data-i18n="addFriendAliasLabel">Dein Name für ihn (für Sprache & schnellen Zugriff)</label>
+      <input id="addFriendAlias" class="auth-field" type="text" data-i18n-ph="aliasPlaceholder" placeholder="z. B. Mama, Papa, Freundin…" autocomplete="off" />
+      <button id="addFriendBtn" class="primary-btn" data-i18n="add">Hinzufügen</button>
       <div id="addFriendMsg" class="invite-msg hidden"></div>
       <ul id="friendsList" class="friends-list"></ul>
     </div>
