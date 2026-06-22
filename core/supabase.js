@@ -418,6 +418,100 @@
   };
 
   // Einheitliche Teilen-Schnittstelle (nur mit Cloud verfügbar).
+  // ---- Profile (@Nutzername) ----
+  function cleanUsername(name) {
+    return (name || '').trim().toLowerCase().replace(/^@+/, '').replace(/[^a-z0-9._]/g, '');
+  }
+
+  async function getMyProfile() {
+    const c = await ensureClient();
+    const { data } = await c.from('profiles').select('uid, username, display_name').eq('uid', uid).maybeSingle();
+    return data || null;
+  }
+
+  async function setUsername(name, displayName) {
+    const c = await ensureClient();
+    const username = cleanUsername(name);
+    if (username.length < 3) throw new Error('too-short');
+    const { error } = await c
+      .from('profiles')
+      .upsert({ uid, username, display_name: displayName || null, updated_at: new Date().toISOString() });
+    if (error) {
+      if (error.code === '23505') throw new Error('taken'); // username unique-Verletzung
+      throw error;
+    }
+    return username;
+  }
+
+  async function findUser(name) {
+    const c = await ensureClient();
+    const username = cleanUsername(name);
+    if (!username) return null;
+    const { data } = await c
+      .from('profiles')
+      .select('uid, username, display_name')
+      .eq('username', username)
+      .maybeSingle();
+    return data || null;
+  }
+
+  // ---- Einladungen (Anfrage → Annehmen → geteilt) ----
+  async function sendInvite(note, toUid, fromName) {
+    const c = await ensureClient();
+    if (toUid === uid) throw new Error('self');
+    // Sicherstellen, dass die Notiz geteilt ist (Code vorhanden).
+    const code = await shareNote(note);
+    markSelfWrite();
+    const { error } = await c.from('invites').insert({
+      note_id: note.id,
+      code,
+      from_uid: uid,
+      from_name: fromName || null,
+      to_uid: toUid,
+      note_title: note.title || null,
+      status: 'pending'
+    });
+    if (error) throw error;
+    return true;
+  }
+
+  async function pendingInvites() {
+    const c = await ensureClient();
+    const { data } = await c
+      .from('invites')
+      .select('*')
+      .eq('to_uid', uid)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    return data || [];
+  }
+
+  async function acceptInvite(invite) {
+    const c = await ensureClient();
+    if (invite.code) await joinByCode(invite.code);
+    await c.from('invites').update({ status: 'accepted' }).eq('id', invite.id);
+    return invite.note_id;
+  }
+
+  async function declineInvite(invite) {
+    const c = await ensureClient();
+    await c.from('invites').update({ status: 'declined' }).eq('id', invite.id);
+  }
+
+  function onInvites(cb) {
+    ensureClient()
+      .then((c) => {
+        c.channel('nz-invites')
+          .on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'invites', filter: 'to_uid=eq.' + uid },
+            (p) => cb(p.new)
+          )
+          .subscribe();
+      })
+      .catch(() => {});
+  }
+
   global.NZShare = {
     available: () => true,
     shareNote,
@@ -427,4 +521,7 @@
     joinPresence,
     savePushToken
   };
+
+  global.NZProfile = { getMyProfile, setUsername, findUser, cleanUsername };
+  global.NZInvites = { sendInvite, pendingInvites, acceptInvite, declineInvite, onInvites };
 })(typeof window !== 'undefined' ? window : globalThis);

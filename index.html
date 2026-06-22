@@ -149,6 +149,16 @@
       <h2 data-i18n="shareNote">🔗 Notiz teilen</h2>
       <div id="shareBusy" class="modal-hint hidden" data-i18n="oneMoment">Einen Moment…</div>
 
+      <div class="invite-box">
+        <label data-i18n="inviteByName">An einen Nutzer senden</label>
+        <div class="copy-row">
+          <input id="inviteUser" type="text" placeholder="@name" autocomplete="off" autocapitalize="none" />
+          <button id="inviteSendBtn" class="primary-btn" data-i18n="inviteSend">Senden</button>
+        </div>
+        <div id="inviteMsg" class="invite-msg hidden"></div>
+      </div>
+      <div class="auth-or"><span data-i18n="authOr">oder</span></div>
+
       <div id="shareUnshared">
         <p class="modal-hint" data-i18n="shareHintUnshared">Teile diese Notiz, damit andere sie live mitbearbeiten können – ganz ohne Konto.</p>
         <button id="doShareBtn" class="primary-btn" data-i18n="shareNow">Jetzt teilen</button>
@@ -191,6 +201,14 @@
     <div class="modal">
       <button class="modal-close" id="authClose">✕</button>
       <h2 id="authTitle">🔒 Notizen sichern</h2>
+      <div id="profileBox" class="profile-box hidden">
+        <label data-i18n="yourUsername">Dein @Name (damit dich andere zum Teilen finden)</label>
+        <div class="copy-row">
+          <input id="usernameInput" type="text" placeholder="@name" autocomplete="off" autocapitalize="none" />
+          <button id="usernameSave" class="primary-btn" data-i18n="save">Speichern</button>
+        </div>
+        <div id="usernameMsg" class="invite-msg hidden"></div>
+      </div>
       <p class="modal-hint" id="authHint">
         Sichere deine Notizen mit E-Mail + Passwort. So bleiben sie dauerhaft erhalten – auch nach
         Neustart oder Neuinstallation – und sind auf allen deinen Geräten gleich.
@@ -218,6 +236,17 @@
         <p class="modal-hint" id="authSignedInText"></p>
         <button id="authSignout" class="danger-btn" data-i18n="signOut">Abmelden</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Eingehende Notiz-Anfrage -->
+  <div id="inviteModal" class="modal-overlay hidden">
+    <div class="modal">
+      <button class="modal-close" id="inviteClose">✕</button>
+      <h2 data-i18n="inviteTitle">👤 Notiz-Anfrage</h2>
+      <p class="modal-hint" id="inviteText"></p>
+      <button id="inviteAccept" class="primary-btn" data-i18n="inviteAccept">Annehmen</button>
+      <button id="inviteDecline" class="danger-btn" data-i18n="inviteDecline">Ablehnen</button>
     </div>
   </div>
 

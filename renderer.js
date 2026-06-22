@@ -820,6 +820,46 @@ async function openShare() {
   }
   showShareModal(true);
   renderShareState(note);
+  $('inviteUser').value = '';
+  $('inviteMsg').classList.add('hidden');
+}
+
+// ---- Teilen per @Nutzername (Anfrage senden) ----
+function showSmallMsg(el, text, isErr) {
+  el.textContent = text;
+  el.classList.toggle('err', !!isErr);
+  el.classList.remove('hidden');
+}
+
+async function sendInviteToUser() {
+  const note = currentNote();
+  const msg = $('inviteMsg');
+  msg.classList.add('hidden');
+  if (!note || !cloudReady() || !window.NZInvites) return;
+  if (!NZProfile.cleanUsername($('inviteUser').value)) return showSmallMsg(msg, t('inviteNeedName'), true);
+  $('inviteSendBtn').disabled = true;
+  try {
+    const user = await NZProfile.findUser($('inviteUser').value);
+    if (!user) {
+      showSmallMsg(msg, t('inviteUserNotFound'), true);
+      return;
+    }
+    const myProfile = await NZProfile.getMyProfile();
+    const fromName = myProfile && myProfile.username ? '@' + myProfile.username : NZDevice.me().nickname;
+    await NZInvites.sendInvite(note, user.uid, fromName);
+    note.shared = true;
+    persist();
+    renderShareState(note);
+    renderNoteList();
+    updateSharedBadge(note);
+    setupBodyFor(note);
+    showSmallMsg(msg, t('inviteSent', { name: user.username }), false);
+    $('inviteUser').value = '';
+  } catch (e) {
+    showSmallMsg(msg, e.message === 'self' ? t('inviteSelf') : t('errGeneric') + (e.message || e), true);
+  } finally {
+    $('inviteSendBtn').disabled = false;
+  }
 }
 
 async function doShare() {
@@ -1019,6 +1059,7 @@ function openAuth() {
   $('authPassword').value = '';
   $('authError').classList.add('hidden');
   renderAuthMode();
+  loadUsernameField();
   $('authModal').classList.remove('hidden');
 }
 
@@ -1063,6 +1104,84 @@ async function signOutAccount() {
   if (!confirm(t('signOutConfirm'))) return;
   await NZAuth.signOutUser();
   location.reload();
+}
+
+// ---- @Nutzername (Profil) ----
+async function loadUsernameField() {
+  if (!authAvailable() || !window.NZProfile) return;
+  $('profileBox').classList.remove('hidden');
+  $('usernameMsg').classList.add('hidden');
+  try {
+    const p = await NZProfile.getMyProfile();
+    $('usernameInput').value = p && p.username ? '@' + p.username : '';
+  } catch {}
+}
+async function saveUsername() {
+  const msg = $('usernameMsg');
+  msg.classList.add('hidden');
+  $('usernameSave').disabled = true;
+  try {
+    const info = window.NZAuth ? await NZAuth.getAuthInfo() : null;
+    const display = (info && info.email) || NZDevice.me().nickname;
+    const uname = await NZProfile.setUsername($('usernameInput').value, display);
+    $('usernameInput').value = '@' + uname;
+    showSmallMsg(msg, t('usernameSaved'), false);
+  } catch (e) {
+    const m =
+      e.message === 'too-short' ? t('usernameTooShort') : e.message === 'taken' ? t('usernameTaken') : t('errGeneric') + (e.message || e);
+    showSmallMsg(msg, m, true);
+  } finally {
+    $('usernameSave').disabled = false;
+  }
+}
+
+// ---- Eingehende Notiz-Anfragen ----
+let inviteQueue = [];
+let inviteShowing = null;
+function enqueueInvite(inv) {
+  if (!inv) return;
+  if ((inviteShowing && inviteShowing.id === inv.id) || inviteQueue.some((i) => i.id === inv.id)) return;
+  inviteQueue.push(inv);
+  showNextInvite();
+}
+function showNextInvite() {
+  if (inviteShowing || !inviteQueue.length) return;
+  inviteShowing = inviteQueue.shift();
+  $('inviteText').textContent = t('inviteRequestText', {
+    who: inviteShowing.from_name || t('someone'),
+    title: (inviteShowing.note_title || '').trim() || t('untitled')
+  });
+  $('inviteModal').classList.remove('hidden');
+}
+function closeInvite() {
+  $('inviteModal').classList.add('hidden');
+  inviteShowing = null;
+  setTimeout(showNextInvite, 250);
+}
+async function acceptCurrentInvite() {
+  const inv = inviteShowing;
+  if (!inv) return;
+  $('inviteAccept').disabled = true;
+  try {
+    const noteId = await NZInvites.acceptInvite(inv);
+    data = await NZStore.load();
+    renderAll();
+    closeInvite();
+    if (noteId) openNote(noteId);
+    showToast(t('inviteAcceptedToast', { title: (inv.note_title || '').trim() || t('untitled') }));
+  } catch (e) {
+    alert(t('errGeneric') + (e.message || e));
+  } finally {
+    $('inviteAccept').disabled = false;
+  }
+}
+async function declineCurrentInvite() {
+  const inv = inviteShowing;
+  if (!inv) return;
+  try {
+    await NZInvites.declineInvite(inv);
+  } catch {}
+  closeInvite();
 }
 
 // ---- Anmelden mit Google / Apple ----
@@ -1407,6 +1526,20 @@ $('authPassword').addEventListener('keydown', (e) => {
 $('authModal').addEventListener('click', (e) => {
   if (e.target === $('authModal')) $('authModal').classList.add('hidden');
 });
+
+// ---- Teilen-per-Nutzername-Events ----
+$('usernameSave').onclick = saveUsername;
+$('inviteSendBtn').onclick = sendInviteToUser;
+$('inviteClose').onclick = closeInvite;
+$('inviteAccept').onclick = acceptCurrentInvite;
+$('inviteDecline').onclick = declineCurrentInvite;
+$('inviteUser').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendInviteToUser();
+});
+$('usernameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') saveUsername();
+});
+
 NZStore.ready.then(async () => {
   await updateAccountUI();
   if (window.NZAI && NZAI.available() && NZStore.kind === 'supabase') {
@@ -1414,6 +1547,13 @@ NZStore.ready.then(async () => {
       $('voiceBtn').classList.remove('hidden');
       $('editVoiceBtn').classList.remove('hidden');
     }
+  }
+  // Eingehende Notiz-Anfragen: offene laden + live lauschen.
+  if (authAvailable() && window.NZInvites) {
+    try {
+      (await NZInvites.pendingInvites()).forEach(enqueueInvite);
+    } catch {}
+    NZInvites.onInvites((inv) => enqueueInvite(inv));
   }
   // Falls von iOS abgemeldet, aber E-Mail bekannt → freundlich zum Anmelden auffordern
   const remembered = window.NZAuth && NZAuth.lastEmail ? NZAuth.lastEmail() : null;
