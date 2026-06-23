@@ -1005,6 +1005,8 @@ input, textarea, [contenteditable], .body-input, .preview {
 }
 .friend-chip:hover { border-color: var(--accent); }
 .friend-chip:active { transform: scale(0.97); }
+.friend-chip.matched { background: var(--accent); color: #fff; }
+#voiceShareChips { margin: 6px 0 14px; }
 .link-btn {
   background: none;
   border: none;

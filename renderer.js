@@ -1362,6 +1362,84 @@ async function aiSort() {
   }
 }
 
+// ---- Sprach-Teilen: gesprochenen Namen gegen die Freundesliste matchen ----
+function normName(s) {
+  return (s || '').toLowerCase().trim().replace(/[^a-z0-9äöüß ]/g, '');
+}
+function lev(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const d = Array.from({ length: m + 1 }, (_, i) => [i, ...new Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+    }
+  }
+  return d[m][n];
+}
+function scoreName(cand, q) {
+  if (!cand || !q) return 0;
+  if (cand === q) return 100;
+  if (cand.startsWith(q) || q.startsWith(cand)) return 85;
+  if (cand.includes(q) || q.includes(cand)) return 72;
+  const dist = lev(cand, q);
+  const max = Math.max(cand.length, q.length) || 1;
+  return Math.max(0, 100 - (dist / max) * 100);
+}
+function matchFriend(spoken, friends) {
+  const q = normName(spoken);
+  if (!q) return null;
+  let best = null;
+  let bestScore = 0;
+  (friends || []).forEach((f) => {
+    [f.alias, f.friend_username].filter(Boolean).forEach((c) => {
+      const s = scoreName(normName(c), q);
+      if (s > bestScore) {
+        bestScore = s;
+        best = f;
+      }
+    });
+  });
+  return bestScore >= 62 ? best : null;
+}
+
+// Nach einer Sprachnotiz mit "teile mit X": Dialog zum Bestätigen/Auswählen.
+async function promptVoiceShare(spoken) {
+  const note = currentNote();
+  if (!note || !cloudReady() || !window.NZFriends) return;
+  let friends = [];
+  try {
+    friends = await NZFriends.listFriends();
+  } catch {}
+  if (!friends.length) return; // keine Freunde → nichts vorzuschlagen
+  const matched = matchFriend(spoken, friends);
+  $('voiceShareText').textContent = matched
+    ? t('voiceShareMatched', { spoken, name: friendLabel(matched) })
+    : t('voiceSharePick', { spoken });
+  const box = $('voiceShareChips');
+  box.innerHTML = '';
+  const ordered = matched ? [matched, ...friends.filter((f) => f.friend_uid !== matched.friend_uid)] : friends;
+  ordered.forEach((f) => {
+    const b = document.createElement('button');
+    b.className = 'friend-chip' + (matched && f.friend_uid === matched.friend_uid ? ' matched' : '');
+    b.textContent = friendLabel(f);
+    b.onclick = async () => {
+      closeVoiceShare();
+      await doSendInvite(f.friend_uid, friendLabel(f));
+      showToast(t('inviteSent', { name: friendLabel(f) }));
+    };
+    box.appendChild(b);
+  });
+  $('voiceShareModal').classList.remove('hidden');
+}
+function closeVoiceShare() {
+  $('voiceShareModal').classList.add('hidden');
+}
+
 // ---- Sprachnotiz (aufnehmen -> Whisper -> KI-Liste) ----
 let mediaRecorder = null;
 let audioChunks = [];
@@ -1457,6 +1535,7 @@ async function processVoice(blob) {
     } else {
       createNoteFromAI(res.title, res.items);
     }
+    if (res.shareWith && String(res.shareWith).trim()) promptVoiceShare(res.shareWith);
   } catch (e) {
     $('voiceProcessing').classList.add('hidden');
     showVoiceError(t('errGeneric') + (e.message || e));
@@ -1647,6 +1726,11 @@ $('addFriendInput').addEventListener('keydown', (e) => {
 });
 $('friendsModal').addEventListener('click', (e) => {
   if (e.target === $('friendsModal')) $('friendsModal').classList.add('hidden');
+});
+$('voiceShareClose').onclick = closeVoiceShare;
+$('voiceShareSkip').onclick = closeVoiceShare;
+$('voiceShareModal').addEventListener('click', (e) => {
+  if (e.target === $('voiceShareModal')) closeVoiceShare();
 });
 $('usernameInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') saveUsername();
