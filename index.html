@@ -12,6 +12,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <link rel="stylesheet" href="fonts/manrope.css" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -41,10 +42,6 @@
         🎤 <span data-i18n="voiceNote">Sprachnotiz</span>
       </button>
 
-      <div class="search-box">
-        <input id="searchInput" type="text" data-i18n-ph="search" placeholder="Suchen…" autocomplete="off" />
-      </div>
-
       <nav class="folders">
         <div class="folders-head">
           <span data-i18n="folders">Ordner</span>
@@ -64,9 +61,13 @@
     <!-- Note list -->
     <section class="note-list-panel">
       <div class="list-header">
-        <button id="menuBtn" class="mobile-only icon-btn" data-i18n-title="menu" title="Menü">☰</button>
         <h2 id="listTitle">Alle Notizen</h2>
         <span id="noteCount" class="count">0</span>
+      </div>
+      <div id="listSearch" class="list-search">
+        <span class="ls-ic">🔍</span>
+        <input id="searchInput" type="text" data-i18n-ph="search" placeholder="Suchen…" autocomplete="off" enterkeyhint="search" />
+        <button id="searchClose" class="ls-close" title="Suche schließen" aria-label="Suche schließen">✕</button>
       </div>
       <div class="status-filter">
         <button data-filter="all" class="active" data-i18n="filterAll">Alle</button>
@@ -93,8 +94,32 @@
       </div>
     </section>
 
-    <button id="fabVoice" class="fab fab-voice hidden" data-i18n-title="voiceNoteTitle" data-i18n-aria="voiceNoteTitle" title="Sprachnotiz aufnehmen" aria-label="Sprachnotiz aufnehmen">🎤</button>
-    <button id="fabNew" class="fab" data-i18n-title="newNoteTitle" data-i18n-aria="newNoteTitle" title="Neue Notiz" aria-label="Neue Notiz">+</button>
+    <button id="fabVoice" class="fab fab-voice" data-i18n-title="voiceNoteTitle" data-i18n-aria="voiceNoteTitle" title="Sprachnotiz aufnehmen" aria-label="Sprachnotiz aufnehmen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3"/></svg></button>
+    <button id="fabNew" class="fab" data-i18n-title="newNoteTitle" data-i18n-aria="newNoteTitle" title="Neue Notiz" aria-label="Neue Notiz"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+
+    <!-- Bottom-Navigation (nur mobil) -->
+    <nav id="bottomNav" class="bottom-nav">
+      <button class="bnav-item active" data-nav="notes">
+        <span class="bnav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg></span>
+        <span class="bnav-lbl">Notizen</span>
+      </button>
+      <button class="bnav-item" data-nav="termine">
+        <span class="bnav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="16" rx="2.5"/><path d="M8 3v4M16 3v4M3.5 10h17"/></svg></span>
+        <span class="bnav-lbl">Termine</span>
+      </button>
+      <button class="bnav-item" data-nav="friends">
+        <span class="bnav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3.3 2.5-5.5 5.5-5.5s5.5 2.2 5.5 5.5"/><path d="M16 5.3a3 3 0 0 1 0 5.4"/><path d="M17.6 14.7c1.9.7 3.4 2.6 3.4 5.3"/></svg></span>
+        <span class="bnav-lbl">Freunde</span>
+      </button>
+      <button class="bnav-item" data-nav="search">
+        <span class="bnav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg></span>
+        <span class="bnav-lbl">Suche</span>
+      </button>
+      <button class="bnav-item" data-nav="settings">
+        <span class="bnav-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.1"/><path d="M12 2.6v3.1M12 18.3v3.1M2.6 12h3.1M18.3 12h3.1M5.2 5.2l2.2 2.2M16.6 16.6l2.2 2.2M18.8 5.2l-2.2 2.2M7.4 16.6l-2.2 2.2"/></svg></span>
+        <span class="bnav-lbl">Einstellungen</span>
+      </button>
+    </nav>
 
     <!-- Editor -->
     <main class="editor-panel">
@@ -139,6 +164,26 @@
           <select id="folderSelect" class="folder-select"></select>
         </div>
 
+        <div id="whenRow" class="when-row hidden">
+          <span class="when-ic">📅</span>
+          <input id="whenInput" type="datetime-local" class="when-input" />
+          <button id="whenClear" class="when-clear hidden" data-i18n-title="whenClear" title="Termin entfernen">✕</button>
+        </div>
+        <button id="noteRemRow" class="note-rem-row hidden">
+          <span class="nrr-main">⏰ <span id="noteRemVal"></span></span>
+          <span class="sset-chev">›</span>
+        </button>
+        <div id="rsvpBox" class="rsvp-box hidden">
+          <div class="rsvp-title" data-i18n="rsvpTitle">Wer ist dabei?</div>
+          <div class="rsvp-btns">
+            <button id="rsvpYes" class="rsvp-btn rsvp-yes">✓ <span data-i18n="rsvpYes">Dabei</span></button>
+            <button id="rsvpNo" class="rsvp-btn rsvp-no">✗ <span data-i18n="rsvpNo">Nicht dabei</span></button>
+          </div>
+          <div id="rsvpList" class="rsvp-list"></div>
+        </div>
+
+        <textarea id="bodyInput" class="body-input hidden" data-i18n-ph="bodyPlaceholder" placeholder="Notiz-Text…" rows="4"></textarea>
+
         <div class="subtasks">
           <div class="subtasks-head">
             <span><span data-i18n="subtasks">Teilaufgaben</span> <span id="subProgress" class="sub-progress"></span></span>
@@ -159,7 +204,91 @@
     </main>
   </div>
 
+  <!-- Termine-Screen (eigener Tab in der Bottom-Nav) -->
+  <div id="termineScreen" class="termine-screen">
+    <div class="termine-head">
+      <h2>📅 <span data-i18n="agendaTitle">Termine</span></h2>
+    </div>
+    <ul id="termineList" class="termine-list"></ul>
+    <div id="termineEmpty" class="termine-empty hidden">
+      <span class="te-icon">🗓️</span>
+      <p data-i18n="agendaEmpty">Noch keine Termine – sprich einfach einen ein! 🎤</p>
+    </div>
+    <div class="termine-fabs">
+      <button id="termineVoiceBtn" class="tfab tfab-voice" data-i18n-title="voiceNoteTitle" data-i18n-aria="voiceNoteTitle" title="Sprachnotiz aufnehmen" aria-label="Sprachnotiz aufnehmen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/></svg></button>
+      <button id="termineAddBtn" class="tfab tfab-add" data-i18n-title="newTermin" data-i18n-aria="newTermin" title="Neuer Termin" aria-label="Neuer Termin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+  </div>
+
   <!-- Teilen-Dialog -->
+  <!-- Einstellungen -->
+  <!-- Einstellungen: Vollbild-Screen (Glass-Stil) -->
+  <div id="settingsScreen" class="settings-screen">
+    <div class="sset-scroll">
+      <h2 class="sset-title" data-i18n="settingsTitle">Einstellungen</h2>
+
+      <div class="set-sec-label" data-i18n="secProfile">Profil</div>
+      <button id="setAccountRow" class="sset-card sset-profile">
+        <span id="setAvatar" class="sset-avatar">?</span>
+        <span class="sset-pmain">
+          <span id="setPName" class="sset-pname"></span>
+          <span id="setAccountSub" class="sset-psub"></span>
+        </span>
+        <span class="sset-chev">›</span>
+      </button>
+
+      <div class="set-sec-label" data-i18n="secPrefs">Einstellungen</div>
+      <div class="sset-card sset-group">
+        <button id="setThemeRow" class="sset-row">
+          <span class="sset-ic">🌙</span><span class="sset-lbl">Design</span><span id="setThemeVal" class="sset-pill"></span>
+        </button>
+        <button id="setLangRow" class="sset-row">
+          <span class="sset-ic">🌐</span><span class="sset-lbl" data-i18n="langLabel">Sprache</span><span id="setLangVal" class="sset-pill"></span>
+        </button>
+        <button id="setReminderRow" class="sset-row">
+          <span class="sset-ic">⏰</span><span class="sset-lbl" data-i18n="reminders">Termin-Erinnerungen</span><span id="setReminderVal" class="sset-val"></span><span class="sset-chev">›</span>
+        </button>
+        <button id="setBriefRow" class="sset-row">
+          <span class="sset-ic">☀️</span><span class="sset-lbl" data-i18n="briefing">Morgen-Briefing</span><span id="setBriefVal" class="sset-val"></span><span class="sset-chev">›</span>
+        </button>
+      </div>
+
+      <div id="setVersion" class="settings-version"></div>
+    </div>
+  </div>
+
+  <!-- Morgen-Briefing konfigurieren -->
+  <div id="briefingModal" class="modal-overlay hidden">
+    <div class="modal">
+      <button class="modal-close" id="briefClose">✕</button>
+      <h2>☀️ <span data-i18n="briefing">Morgen-Briefing</span></h2>
+      <p class="modal-hint" data-i18n="briefingHint">Jeden Morgen eine kurze Übersicht: deine Termine des Tages und offene Aufgaben.</p>
+      <div class="reminder-toggle-row">
+        <span data-i18n="briefingOn">Briefing aktiv</span>
+        <button id="briefToggle" class="switch" role="switch"><span class="knob"></span></button>
+      </div>
+      <div class="brief-time-row">
+        <span data-i18n="briefingTime">Uhrzeit</span>
+        <input id="briefTime" type="time" class="when-input" value="08:00" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Termin-Erinnerungen konfigurieren -->
+  <div id="reminderModal" class="modal-overlay hidden">
+    <div class="modal">
+      <button class="modal-close" id="reminderClose">✕</button>
+      <h2>⏰ <span data-i18n="reminders">Termin-Erinnerungen</span></h2>
+      <div class="reminder-toggle-row">
+        <span id="reminderToggleLbl" data-i18n="remindersOn">Erinnerungen aktiv</span>
+        <button id="reminderToggle" class="switch" role="switch" aria-checked="true"><span class="knob"></span></button>
+      </div>
+      <p class="modal-hint" data-i18n="remindersHint">Wann sollen wir dich vor einem Termin erinnern? (Mehrfachauswahl)</p>
+      <div id="reminderChips" class="reminder-chips"></div>
+      <p id="reminderPermHint" class="modal-hint hidden" data-i18n="remindersPermHint">Bitte Mitteilungen für SmartNote in den iOS-Einstellungen erlauben.</p>
+    </div>
+  </div>
+
   <div id="shareModal" class="modal-overlay hidden">
     <div class="modal">
       <button class="modal-close" id="shareClose">✕</button>
@@ -227,6 +356,10 @@
       <button id="fillChoiceVoice" class="fill-opt fill-opt-primary">
         <span class="fill-ic">🎤</span>
         <span class="fill-txt"><span class="fill-name" data-i18n="fillVoice">Sprechen</span><span class="fill-sub" data-i18n="fillVoiceHint">Sag einfach, was du brauchst</span></span>
+      </button>
+      <button id="fillChoicePhoto" class="fill-opt">
+        <span class="fill-ic">📷</span>
+        <span class="fill-txt"><span class="fill-name" data-i18n="fillPhoto">Foto scannen</span><span class="fill-sub" data-i18n="fillPhotoHint">Rezept, Zettel oder Tafel abfotografieren</span></span>
       </button>
       <button id="fillChoiceType" class="fill-opt">
         <span class="fill-ic">⌨️</span>
@@ -321,7 +454,10 @@
       <button class="modal-close" id="voiceClose">✕</button>
       <h2 data-i18n="voiceNoteModal">🎤 Sprachnotiz</h2>
       <div id="voiceRecording">
-        <div class="voice-pulse">🎙️</div>
+        <div class="voice-orb-wrap">
+          <canvas id="voiceOrb" class="voice-orb" width="400" height="400"></canvas>
+          <div class="voice-pulse hidden" id="voicePulse">🎙️</div>
+        </div>
         <p class="modal-hint" data-i18n="voiceRecHint">Sprich deine Liste ein – z. B. „Ich muss Milch, Brot und Eier kaufen und den Müll rausbringen."</p>
         <p class="voice-timer" id="voiceTimer">0:00</p>
         <button id="voiceStop" class="primary-btn" data-i18n="voiceDone">⏹ Fertig</button>
@@ -334,11 +470,20 @@
         <p class="voice-summary" id="voiceSummary"></p>
         <div class="voice-preview">
           <h3 id="voicePreviewTitle"></h3>
+          <p id="voicePreviewBody" class="voice-preview-body hidden"></p>
+          <div id="voicePreviewWhen" class="voice-when-line hidden"></div>
           <ul id="voicePreviewItems"></ul>
           <div id="voicePreviewShare" class="voice-share-line hidden"></div>
         </div>
         <button id="voiceConfirmBtn" class="primary-btn voice-confirm-btn" data-i18n="voiceConfirm">✓ Passt – erstellen</button>
         <button id="voiceAdjustBtn" class="voice-adjust-btn" data-i18n="voiceAdjust">🎤 Anpassen</button>
+      </div>
+      <div id="voiceAnswer" class="hidden">
+        <div class="voice-answer-icon">💡</div>
+        <p id="voiceAnswerText" class="voice-answer-text"></p>
+        <div id="voiceAnswerNotes" class="voice-answer-notes"></div>
+        <button id="voiceAnswerAgain" class="voice-adjust-btn" data-i18n="voiceAskMore">🎤 Weiter fragen</button>
+        <button id="voiceAnswerOk" class="primary-btn" data-i18n="ok">OK</button>
       </div>
       <div id="voiceError" class="join-error hidden"></div>
     </div>

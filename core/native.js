@@ -89,10 +89,23 @@
   function voiceRec() {
     return plugin('VoiceRecorder');
   }
+  // Eigenes NZRecorder-Plugin (mit Live-Pegel für die Aufnahme-Animation) – bevorzugt.
+  function nzRec() {
+    return plugin('NZRecorder');
+  }
   function nativeRecordAvailable() {
-    return isIOS() && !!voiceRec();
+    return isIOS() && !!(nzRec() || voiceRec());
   }
   async function startNativeRecording() {
+    const R = nzRec();
+    if (R) {
+      try {
+        const r = await R.start();
+        return !!(r && r.ok);
+      } catch {
+        return false;
+      }
+    }
     const VR = voiceRec();
     if (!VR) return false;
     try {
@@ -107,6 +120,14 @@
     }
   }
   async function stopNativeRecording() {
+    const R = nzRec();
+    if (R) {
+      try {
+        const r = await R.stop();
+        if (r && r.ok && r.base64) return { base64: r.base64, mimeType: r.mimeType || 'audio/aac' };
+      } catch {}
+      return null;
+    }
     const VR = voiceRec();
     if (!VR) return null;
     try {
@@ -115,6 +136,29 @@
       if (v && v.recordDataBase64) return { base64: v.recordDataBase64, mimeType: v.mimeType || 'audio/aac' };
     } catch {}
     return null;
+  }
+  // Aufnahme verwerfen (Abbrechen) – Ergebnis interessiert nicht.
+  async function cancelNativeRecording() {
+    const R = nzRec();
+    if (R) {
+      try { await R.cancel(); } catch {}
+      return;
+    }
+    const VR = voiceRec();
+    if (VR) {
+      try { await VR.stopRecording(); } catch {}
+    }
+  }
+  // Aktueller Mikrofonpegel 0..1 (nur mit NZRecorder verfügbar, sonst null).
+  async function getRecordingLevel() {
+    const R = nzRec();
+    if (!R) return null;
+    try {
+      const r = await R.level();
+      return r && typeof r.level === 'number' ? r.level : 0;
+    } catch {
+      return null;
+    }
   }
 
   // ---- Externen Browser öffnen (für OAuth-Login) ----
@@ -169,15 +213,119 @@
 
   // ---- Push (Teil 2) ----
   // Registriert das Gerät für Push und liefert den FCM-Token via onToken(token).
+  // Nutzt @capacitor-firebase/messaging → liefert auf iOS UND Android einen echten
+  // FCM-Token (nicht den rohen APNs-Token, den FCM ablehnt).
   async function registerPush(onToken) {
-    const Push = plugin('PushNotifications');
-    if (!Push) return false;
-    const perm = await Push.requestPermissions();
-    if (perm.receive !== 'granted') return false;
-    Push.addListener('registration', (t) => onToken && onToken(t.value));
-    Push.addListener('registrationError', (e) => console.warn('[Push] Fehler:', e));
-    await Push.register();
+    const FM = plugin('FirebaseMessaging');
+    if (!FM) { console.warn('[Push] FirebaseMessaging-Plugin fehlt'); return false; }
+    try {
+      const perm = await FM.requestPermissions();
+      if (perm && perm.receive && perm.receive !== 'granted') {
+        console.warn('[Push] Berechtigung nicht erteilt:', perm.receive);
+        return false;
+      }
+    } catch (e) { console.warn('[Push] requestPermissions:', e); }
+    // Falls der Token später neu ausgestellt wird (z. B. nach APNs-Registrierung).
+    try {
+      FM.addListener('tokenReceived', (ev) => {
+        if (onToken && ev && ev.token) onToken(ev.token);
+      });
+    } catch {}
+    try {
+      const res = await FM.getToken();
+      if (res && res.token && onToken) onToken(res.token);
+    } catch (e) {
+      console.warn('[Push] getToken:', e);
+    }
     return true;
+  }
+
+  // ---- Lokale Benachrichtigungen (Termin-Erinnerungen, komplett auf dem Gerät) ----
+  function remindersAvailable() {
+    return !!plugin('LocalNotifications');
+  }
+  async function requestReminderPermission() {
+    const LN = plugin('LocalNotifications');
+    if (!LN) return false;
+    try {
+      const p = await LN.requestPermissions();
+      return !!(p && p.display === 'granted');
+    } catch {
+      return false;
+    }
+  }
+  // Ersetzt ALLE geplanten Erinnerungen durch die übergebene Liste
+  // items: [{ id:int, title, body, at:Date, actionTypeId?, extra? }]
+  async function replaceReminders(items) {
+    const LN = plugin('LocalNotifications');
+    if (!LN) return false;
+    try {
+      const pending = await LN.getPending();
+      const ids = ((pending && pending.notifications) || []).map((n) => ({ id: n.id }));
+      if (ids.length) await LN.cancel({ notifications: ids });
+    } catch {}
+    if (!items || !items.length) return true;
+    try {
+      await LN.schedule({
+        notifications: items.map((it) => {
+          const n = {
+            id: it.id,
+            title: it.title,
+            body: it.body,
+            schedule: { at: it.at },
+            sound: 'default'
+          };
+          if (it.actionTypeId) n.actionTypeId = it.actionTypeId;
+          if (it.extra) n.extra = it.extra;
+          return n;
+        })
+      });
+      return true;
+    } catch (e) {
+      console.warn('[Reminder] schedule fehlgeschlagen:', e);
+      return false;
+    }
+  }
+
+  // Interaktive "Termin vorbei – erledigt?"-Benachrichtigung: registriert die
+  // Aktions-Buttons und meldet Antworten (auch aus dem Hintergrund) an onAction.
+  async function initTermActions(labels, onAction) {
+    const LN = plugin('LocalNotifications');
+    if (!LN) return false;
+    try {
+      await LN.registerActionTypes({
+        types: [
+          {
+            id: 'TERM_DONE',
+            actions: [
+              { id: 'done', title: labels.done },
+              { id: 'keep', title: labels.keep }
+            ]
+          }
+        ]
+      });
+    } catch (e) {
+      console.warn('[Reminder] registerActionTypes:', e);
+    }
+    try {
+      LN.addListener('localNotificationActionPerformed', (ev) => {
+        const noteId = ev && ev.notification && ev.notification.extra && ev.notification.extra.noteId;
+        if (onAction) onAction(ev.actionId, noteId);
+      });
+    } catch {}
+    return true;
+  }
+
+  // ---- Homescreen-Widget: Termin-Daten in die App Group schieben ----
+  async function updateWidget(list) {
+    const W = plugin('NZWidget');
+    if (!W) return false;
+    try {
+      await W.update({ json: JSON.stringify(list || []) });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // ---- Tastatur (iOS): Editor-Bereich über die Tastatur schrumpfen, statt den ganzen Screen zu schieben ----
@@ -200,5 +348,5 @@
     });
   }
 
-  global.NZNative = { isNative, onDeepLink, onAuthCallback, scanAvailable, scanQR, cameraAvailable, takePhoto, openUrl, closeBrowser, nativeRecordAvailable, startNativeRecording, stopNativeRecording, registerPush, parseCode, plugin, initKeyboard };
+  global.NZNative = { isNative, onDeepLink, onAuthCallback, scanAvailable, scanQR, cameraAvailable, takePhoto, openUrl, closeBrowser, nativeRecordAvailable, startNativeRecording, stopNativeRecording, cancelNativeRecording, getRecordingLevel, registerPush, remindersAvailable, requestReminderPermission, replaceReminders, initTermActions, updateWidget, parseCode, plugin, initKeyboard };
 })(typeof window !== 'undefined' ? window : globalThis);

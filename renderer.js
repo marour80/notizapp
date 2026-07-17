@@ -75,12 +75,41 @@ function notifyShared(info) {
 // ---- Init ----
 (async function init() {
   data = await NZStore.load();
+  // Altlasten: früher erzeugte leere Notizen einmalig wegräumen.
+  const beforeSweep = data.notes.length;
+  data.notes = data.notes.filter((n) => !isEmptyNote(n));
+  if (data.notes.length !== beforeSweep) persist();
   const ver = (window.NZ_CONFIG && NZ_CONFIG.VERSION) || '';
   if (ver) $('appVersion').textContent = 'v' + ver;
   applyLanguage(); // setzt statische Texte + Toggle-Label
   const theme = localStorage.getItem('theme') || 'dark';
   applyTheme(theme);
   renderAll();
+  scheduleReminderRefresh(); // geplante Termin-Erinnerungen an den aktuellen Stand angleichen
+
+  // "Termin vorbei – erledigt?"-Buttons: Antwort verarbeiten (kommt auch aus dem Hintergrund).
+  if (window.NZNative && NZNative.initTermActions) {
+    NZNative.initTermActions(
+      { done: t('actionDone'), keep: t('actionKeep') },
+      (actionId, noteId) => {
+        if (!noteId) return;
+        const note = data.notes.find((n) => n.id === noteId);
+        if (!note) return;
+        if (actionId === 'done') {
+          note.termDone = true; // ab nach "Vergangen" – ganz ohne App-Besuch
+          note.updatedAt = Date.now();
+          persist();
+          renderAll();
+        } else if (actionId === 'tap') {
+          // Auf die Nachricht selbst getippt → App öffnet den Termine-Tab
+          renderTermine();
+          document.body.classList.remove('editor-open', 'search-open', 'settings-open');
+          document.body.classList.add('termine-open');
+          setActiveTab('termine');
+        }
+      }
+    );
+  }
 })();
 
 // ---- Sprache anwenden / umschalten ----
@@ -153,6 +182,154 @@ NZStore.onChanged(async (info) => {
 
 function persist() {
   NZStore.save(data);
+  scheduleReminderRefresh(); // Termin-Erinnerungen an den neuen Stand anpassen
+}
+
+// ---- Termin-Erinnerungen (lokale Benachrichtigungen, ganz aufs Gerät geplant) ----
+const REM_LEADS = [
+  { min: 0, key: 'leadAtTime' },
+  { min: 30, key: 'lead30' },
+  { min: 60, key: 'lead60' },
+  { min: 180, key: 'lead180' },
+  { min: 1440, key: 'lead1d' },
+  { min: 2880, key: 'lead2d' },
+  { min: 10080, key: 'lead7d' }
+];
+
+function remOn() {
+  return localStorage.getItem('nz_rem_on') !== '0'; // Standard: an
+}
+function remLeads() {
+  try {
+    const a = JSON.parse(localStorage.getItem('nz_rem_leads') || '[60,1440]');
+    return Array.isArray(a) && a.length ? a : [60, 1440];
+  } catch {
+    return [60, 1440];
+  }
+}
+
+// Stabile Ganzzahl-ID pro Notiz+Vorlauf (LocalNotifications braucht int-IDs).
+function remId(noteId, lead) {
+  const s = noteId + ':' + lead;
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return Math.abs(h) % 2147483647;
+}
+
+let remTimer = null;
+function scheduleReminderRefresh() {
+  clearTimeout(remTimer);
+  remTimer = setTimeout(rescheduleReminders, 800);
+}
+
+async function rescheduleReminders() {
+  if (!(window.NZNative && NZNative.remindersAvailable && NZNative.remindersAvailable())) return;
+  // Kein Früh-Aus bei "global aus": Notizen mit EIGENEN Zeiten erinnern trotzdem (haben Prio).
+  const now = Date.now();
+  const items = [];
+  (data.notes || []).forEach((n) => {
+    const d = whenDate(n);
+    if (!d || n.termDone) return;
+    // Individuelle Zeiten der Notiz haben Vorrang vor der globalen Einstellung.
+    const custom = Array.isArray(n.remLeads) && n.remLeads.length ? n.remLeads : null;
+    if (!custom && !remOn()) return;
+    const leads = custom || remLeads();
+    leads.forEach((lead) => {
+      const at = d.getTime() - lead * 60000;
+      if (at <= now) return;
+      const leadOpt = REM_LEADS.find((o) => o.min === lead);
+      items.push({
+        id: remId(n.id, lead),
+        title: '📅 ' + (n.title || t('untitled')),
+        body: formatWhen(n.when) + (lead ? ' · ' + t(leadOpt ? leadOpt.key : 'lead60') : ''),
+        at: new Date(at)
+      });
+    });
+  });
+
+  // ---- "Termin vorbei – erledigt?"-Nachfrage mit Aktions-Buttons ----
+  // Kommt nach dem Termin (mit Uhrzeit: +90 Min., ohne: um 20 Uhr desselben Tags).
+  // "✓ Erledigt" verschiebt den Termin nach Vergangen, ohne die App zu öffnen.
+  if (remOn()) {
+    (data.notes || []).forEach((n) => {
+      const d = whenDate(n);
+      if (!d || n.termDone) return;
+      const askAt = new Date(d.getTime());
+      if (String(n.when).includes('T')) askAt.setMinutes(askAt.getMinutes() + 90);
+      else askAt.setHours(20, 0, 0, 0);
+      if (askAt.getTime() <= now) return;
+      items.push({
+        id: remId(n.id, 999983),
+        title: t('termOverTitle'),
+        body: t('termOverBody', { title: n.title || t('untitled') }),
+        at: askAt,
+        actionTypeId: 'TERM_DONE',
+        extra: { noteId: n.id }
+      });
+    });
+  }
+
+  // ---- Morgen-Briefing: die nächsten 7 Tage vorausplanen (wird bei jedem Sync aktualisiert) ----
+  if (briefOn()) {
+    const [bh, bm] = briefTime().split(':').map(Number);
+    const openCount = (data.notes || []).reduce(
+      (sum, n) => sum + (n.subtasks || []).filter((s) => !s.deleted && (s.status || 'todo') !== 'done').length,
+      0
+    );
+    for (let day = 0; day < 7; day++) {
+      const at = new Date();
+      at.setDate(at.getDate() + day);
+      at.setHours(bh, bm || 0, 0, 0);
+      if (at.getTime() <= now) continue;
+      const dayTermine = (data.notes || [])
+        .filter((n) => {
+          const d = whenDate(n);
+          return d && !n.termDone && d.toDateString() === at.toDateString();
+        })
+        .sort((a, b) => whenDate(a) - whenDate(b));
+      const parts = dayTermine.slice(0, 3).map((n) => {
+        const d = whenDate(n);
+        const hm = String(n.when).includes('T')
+          ? d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+          : '';
+        return (n.title || t('untitled')) + (hm ? ' ' + hm : '');
+      });
+      if (dayTermine.length > 3) parts.push('+' + (dayTermine.length - 3));
+      if (!parts.length && !openCount) continue; // nichts zu berichten
+      const body =
+        (parts.length ? t('briefToday') + ': ' + parts.join(' · ') : t('briefNoTermine')) +
+        (openCount ? ' · ' + t('briefOpen', { n: openCount }) : '');
+      items.push({
+        id: remId('briefing', day),
+        title: t('briefTitle'),
+        body,
+        at
+      });
+    }
+  }
+
+  NZNative.replaceReminders(items);
+
+  // Homescreen-Widget mit den nächsten Terminen versorgen
+  if (NZNative.updateWidget) {
+    const widgetList = (data.notes || [])
+      .filter((n) => whenDate(n) && !n.termDone)
+      .sort((a, b) => whenDate(a) - whenDate(b))
+      .slice(0, 8)
+      .map((n) => ({ id: n.id, title: n.title || t('untitled'), when: String(n.when) }));
+    NZNative.updateWidget(widgetList);
+  }
+}
+
+// ---- Morgen-Briefing: Einstellungen ----
+function briefOn() {
+  return localStorage.getItem('nz_brief_on') !== '0'; // Standard: an
+}
+function briefTime() {
+  return localStorage.getItem('nz_brief_time') || '08:00';
+}
+function briefSummary() {
+  return briefOn() ? briefTime() : t('off');
 }
 
 // ---- Filtering ----
@@ -219,37 +396,179 @@ function renderFolderSelect() {
   });
 }
 
+// ---- Agenda: Notizen mit Termin als eigene, chronologische Sektion ----
+function whenDate(n) {
+  if (!n.when) return null;
+  const hasTime = String(n.when).includes('T');
+  const d = new Date(hasTime ? n.when : n.when + 'T12:00');
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function agendaBucket(d) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((day - today) / 86400000);
+  if (diff < 0) return 'past';
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  if (diff < 7) return 'week';
+  return 'later';
+}
+
+function agendaRow(n, d, askDone) {
+  const loc = (window.NZI18N && NZI18N.lang === 'en') ? 'en-US' : 'de-DE';
+  const wd = d.toLocaleDateString(loc, { weekday: 'short' }).replace('.', '');
+  const hasTime = String(n.when).includes('T');
+  const time = hasTime ? d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' }) : '';
+  const snippet = stripMd(n.body || '');
+  const sub = [time, snippet].filter(Boolean).join(' · ');
+  const li = document.createElement('li');
+  li.className = 'agenda-item' + (askDone ? ' agenda-ask' : '');
+  li.innerHTML = `
+    <div class="agenda-tile"><span class="ag-wd">${escapeHtml(wd)}</span><span class="ag-day">${d.getDate()}</span></div>
+    <div class="agenda-main">
+      <div class="agenda-title">${escapeHtml(n.title) || t('untitled')}</div>
+      ${sub ? `<div class="agenda-sub">${escapeHtml(sub)}</div>` : ''}
+    </div>
+    ${RSVP_ENABLED && n.share && n.share.code && n.rsvp && Object.keys(n.rsvp).length ? `<span class="agenda-rsvp">✓${Object.values(n.rsvp).filter((r) => r.v === 'yes').length}</span>` : ''}
+    ${n.share && n.share.code ? '<span class="agenda-share">🔗</span>' : ''}
+    ${askDone ? `<button class="agenda-done-btn" title="${t('markDone')}">✓</button>` : ''}`;
+  li.onclick = () => openNote(n.id);
+  if (askDone) {
+    li.querySelector('.agenda-done-btn').onclick = (e) => {
+      e.stopPropagation();
+      n.termDone = true; // bestätigt → wandert nach "Vergangen"
+      n.updatedAt = Date.now();
+      persist();
+      renderTermine();
+    };
+  }
+  return li;
+}
+
+function renderAgenda(dated, withHead) {
+  if (!dated.length) return null;
+  const wrap = document.createElement('li');
+  wrap.className = 'agenda-wrap';
+  const buckets = { today: [], tomorrow: [], week: [], later: [], past: [] };
+  dated.forEach((n) => buckets[agendaBucket(whenDate(n))].push(n));
+  const byWhen = (a, b) => whenDate(a) - whenDate(b);
+  const section = document.createElement('div');
+  section.className = 'agenda';
+  if (withHead) section.innerHTML = `<div class="agenda-head">📅 <span>${t('agendaTitle')}</span></div>`;
+  [['today', 'agendaToday'], ['tomorrow', 'agendaTomorrow'], ['week', 'agendaWeek'], ['later', 'agendaLater']].forEach(([key, label]) => {
+    const arr = buckets[key].sort(byWhen);
+    if (!arr.length) return;
+    const g = document.createElement('div');
+    g.className = 'agenda-group agenda-' + key;
+    g.innerHTML = `<div class="agenda-label">${t(label)}</div>`;
+    const ul = document.createElement('ul');
+    arr.forEach((n) => ul.appendChild(agendaRow(n, whenDate(n))));
+    g.appendChild(ul);
+    section.appendChild(g);
+  });
+  // Vorbei, aber noch nicht bestätigt → erst fragen "erledigt?", dann ab nach Vergangen.
+  const pastAll = buckets.past.sort((a, b) => whenDate(b) - whenDate(a));
+  const pastOpen = pastAll.filter((n) => !n.termDone);
+  const past = pastAll.filter((n) => n.termDone);
+  if (pastOpen.length) {
+    const g = document.createElement('div');
+    g.className = 'agenda-group agenda-askdone';
+    g.innerHTML = `<div class="agenda-label">${t('agendaDoneAsk')}</div>`;
+    const ul = document.createElement('ul');
+    pastOpen.forEach((n) => ul.appendChild(agendaRow(n, whenDate(n), true)));
+    g.appendChild(ul);
+    section.appendChild(g);
+  }
+  if (past.length) {
+    const det = document.createElement('details');
+    det.className = 'agenda-past';
+    det.innerHTML = `<summary>${t('agendaPast')} (${past.length})</summary>`;
+    const ul = document.createElement('ul');
+    past.forEach((n) => ul.appendChild(agendaRow(n, whenDate(n))));
+    det.appendChild(ul);
+    section.appendChild(det);
+  }
+  wrap.appendChild(section);
+  return wrap;
+}
+
+// Neuen Termin manuell anlegen: Notiz mit vorbelegtem Datum (nächste volle Stunde),
+// Editor öffnet über dem Termine-Screen – Titel eintippen, Datum ggf. anpassen, fertig.
+function newTermin() {
+  const d = new Date();
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  const p = (x) => String(x).padStart(2, '0');
+  const when = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':00';
+  const note = NZ.makeNote({ title: '', body: '' });
+  note.when = when;
+  data.notes.unshift(note);
+  persist();
+  renderAll();
+  openNote(note.id);
+  titleInput.focus();
+}
+
+// Termine-Tab: alle Notizen mit Termin (ordnerübergreifend), gruppiert wie die Agenda.
+function renderTermine() {
+  const listEl = $('termineList');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  const dated = (data.notes || []).filter((n) => whenDate(n));
+  $('termineEmpty').classList.toggle('hidden', dated.length > 0);
+  const agenda = renderAgenda(dated, false);
+  if (agenda) listEl.appendChild(agenda);
+}
+
 function renderNoteList() {
-  const list = filteredNotes();
-  $('noteCount').textContent = list.length;
+  const all = filteredNotes();
   $('listTitle').textContent = currentFolder === '__all__' ? t('allNotes') : currentFolder;
 
   noteListEl.innerHTML = '';
+
+  // Termin-Notizen leben im eigenen "Termine"-Tab – hier nur die normalen Karten.
+  const list = all.filter((n) => !whenDate(n));
   $('emptyList').classList.toggle('hidden', list.length > 0);
+  $('noteCount').textContent = list.length;
+  renderTermine(); // Termine-Tab immer aktuell halten
 
   list.forEach((n) => {
     const status = deriveStatus(n);
     const hasSubs = (n.subtasks || []).length > 0;
     const li = document.createElement('li');
-    li.className = 'note-card status-' + status + (n.id === activeNoteId ? ' active' : '');
-    const subs = n.subtasks || [];
+    li.className = 'note-card status-' + status + (n.pinned ? ' pinned' : '') + (n.id === activeNoteId ? ' active' : '');
+    const subs = (n.subtasks || []).filter((s) => !s.deleted); // gelöschte zählen nicht
     const subDone = subs.filter((s) => (s.status || 'todo') === 'done').length;
-    const subHtml = subs.length
-      ? `<span class="card-sub">☑ ${subDone}/${subs.length}</span>`
-      : '';
+    const pct = subs.length ? Math.round((subDone / subs.length) * 100) : 0;
     const shareHtml = n.share && n.share.code ? '<span class="card-share">🔗</span>' : '';
     const snippet = escapeHtml(stripMd(n.body || ''));
+    const catLabel = n.folder ? escapeHtml(n.folder) : statusLabel(status);
+    const whenHtml = n.when ? `<div class="card-when">📅 ${escapeHtml(formatWhen(n.when))}</div>` : '';
+    const bodyHtml = subs.length
+      ? `<div class="card-progress">
+           <div class="prog-row">
+             <span class="prog-label">${t('subtasks')}</span>
+             <span class="prog-count">${subDone}/${subs.length}</span>
+           </div>
+           <div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div>
+         </div>`
+      : `${whenHtml}<div class="snippet">${snippet || t('noContent')}</div>`;
     li.innerHTML = `
       <button class="card-pin" aria-label="${t(n.pinned ? 'unpin' : 'pin')}" title="${t(n.pinned ? 'unpin' : 'pin')}">📌</button>
       <button class="card-delete" aria-label="${t('delete')}" title="${t('delete')}">🗑</button>
       <div class="card-inner">
-        <div class="card-title-row">
-          <span class="dot dot-${status}" title="${statusLabel(status)}${hasSubs ? ' ' + t('fromSubtasks') : ' ' + t('clickToCycle')}"></span>
-          ${n.pinned ? '<span class="card-pinned" title="' + t('pinned') + '">📌</span>' : ''}
-          <h3>${escapeHtml(n.title) || t('untitled')}</h3>
+        <div class="card-top">
+          <div class="card-cat">
+            <span class="dot dot-${status}" title="${statusLabel(status)}${hasSubs ? ' ' + t('fromSubtasks') : ' ' + t('clickToCycle')}"></span>
+            <span class="cat-label">${catLabel}</span>
+            ${n.pinned ? '<span class="card-pinned">📌 ' + t('pinned') + '</span>' : ''}
+          </div>
+          ${shareHtml}
         </div>
-        <div class="snippet">${snippet || (subs.length ? subs.map((s) => '• ' + escapeHtml(s.text)).join('  ') : t('noContent'))}</div>
-        <div class="card-meta">${shareHtml}${subHtml}<span>${formatDate(n.updatedAt)}</span></div>
+        <h3>${escapeHtml(n.title) || t('untitled')}</h3>
+        ${bodyHtml}
+        <div class="card-meta"><span>${formatDate(n.updatedAt)}</span>${n.folder ? '<span class="card-tag">' + escapeHtml(n.folder) + '</span>' : ''}</div>
       </div>`;
     const inner = li.querySelector('.card-inner');
     inner.querySelector('.dot').onclick = (e) => {
@@ -403,6 +722,7 @@ function showFillChoice(noteId) {
   const note = data.notes.find((n) => n.id === noteId);
   $('fillChoiceTitle').textContent = (note && note.title) || t('newList');
   $('fillChoiceVoice').classList.toggle('hidden', !aiAvailable()); // ohne KI keine Sprachfüllung
+  $('fillChoicePhoto').classList.toggle('hidden', !(aiAvailable() && window.NZNative && NZNative.cameraAvailable && NZNative.cameraAvailable()));
   $('fillChoiceModal').classList.remove('hidden');
 }
 function closeFillChoice() {
@@ -417,6 +737,52 @@ function fillChoiceVoice() {
 function fillChoiceType() {
   closeFillChoice();
   focusSubAdd();
+}
+
+// Foto → Liste: Foto aufnehmen, KI liest den Inhalt, Vorschau wie bei der Sprachnotiz.
+async function fillChoicePhoto() {
+  const id = fillChoiceNoteId;
+  closeFillChoice();
+  let dataUrl = null;
+  try {
+    dataUrl = await NZNative.takePhoto({
+      header: t('fillPhoto'),
+      camera: t('photoTake'),
+      gallery: t('photoGallery'),
+      cancel: t('cancel')
+    });
+  } catch (e) {
+    return; // abgebrochen oder keine Kamera
+  }
+  if (!dataUrl) return;
+  // Verarbeitung im Voice-Modal anzeigen (gleiche Bestätigungs-UI wie bei Sprache)
+  voiceTargetId = id || null;
+  voiceDraft = null;
+  $('voiceError').classList.add('hidden');
+  $('voiceRecording').classList.add('hidden');
+  $('voiceConfirm').classList.add('hidden');
+  $('voiceAnswer').classList.add('hidden');
+  $('voiceProcessing').classList.remove('hidden');
+  $('voiceModal').classList.remove('hidden');
+  try {
+    const res = await NZAI.photo(dataUrl, (window.NZI18N && NZI18N.lang) || 'de', new Date().toString());
+    voiceDraft = {
+      intent: res.intent === 'note' ? 'note' : 'list',
+      title: res.title || '',
+      items: res.items || [],
+      body: res.body || '',
+      when: res.when || '',
+      answer: '',
+      spoken: '',
+      matchedIds: [],
+      shareWith: '',
+      summary: res.summary || ''
+    };
+    showVoiceConfirm(voiceDraft);
+  } catch (e) {
+    $('voiceProcessing').classList.add('hidden');
+    showVoiceError(t('errGeneric') + (e.message || e));
+  }
 }
 
 // Eingabefeld fokussieren, OHNE dass iOS den Bildschirm hochscrollt (Leiste unter die Statusleiste).
@@ -434,6 +800,8 @@ function openNote(id) {
   const note = data.notes.find((n) => n.id === id);
   if (!note) return;
   closeAllSwipes();
+  // Wechsel von einer leeren Notiz weg → die leere verwerfen.
+  if (activeNoteId && activeNoteId !== id) discardIfEmpty(activeNoteId);
   activeNoteId = id;
   doneGroupOpen = false; // erledigte Teilaufgaben starten zugeklappt
   document.body.classList.add('editor-open'); // Handy: Editor-Ebene einblenden
@@ -459,6 +827,7 @@ function scheduleSave() {
   if (!note) return;
   note.title = titleInput.value;
   note.folder = folderSelect.value;
+  if (!$('bodyInput').classList.contains('hidden')) note.body = $('bodyInput').value;
   note.updatedAt = Date.now();
   $('savedHint').textContent = t('saving');
   clearTimeout(saveTimer);
@@ -470,31 +839,77 @@ function scheduleSave() {
   }, 400);
 }
 
+// Ist die Notiz komplett leer? (Dann soll sie gar nicht erst bestehen bleiben.)
+function isEmptyNote(n) {
+  if (!n) return false;
+  if (n.share && n.share.code) return false; // geteilte Notizen nie automatisch löschen
+  // Ein Datum allein zählt nicht als Inhalt – ein Termin ohne Titel/Text ist wertlos.
+  return !(n.title || '').trim() && !(n.body || '').trim() && !(n.subtasks || []).length;
+}
+
+// Leere Notiz beim Verlassen verwerfen (Plus gedrückt, nichts eingegeben, zurück).
+function discardIfEmpty(noteId) {
+  const n = data.notes.find((x) => x.id === noteId);
+  if (!n || !isEmptyNote(n)) return false;
+  data.notes = data.notes.filter((x) => x.id !== noteId);
+  if (activeNoteId === noteId) activeNoteId = null;
+  persist();
+  return true;
+}
+
 // Editor schließen und zurück zur Liste (wichtig fürs Handy: schließt das Overlay).
 function closeEditor() {
+  const wasActive = activeNoteId;
   activeNoteId = null;
   leavePresence();
   editorEl.classList.add('hidden');
   editorEmptyEl.classList.remove('hidden');
   document.body.classList.remove('editor-open');
+  if (wasActive && discardIfEmpty(wasActive)) renderAll();
+}
+
+// Geteilte Notizen brauchen Sonderbehandlung beim Löschen:
+// - Besitzer: löscht für ALLE → klare Warnung.
+// - Mitglied: nur die Teilung VERLASSEN (note_members-Eintrag entfernen), sonst
+//   bringt der nächste Sync die Notiz als Zombie zurück.
+function confirmSharedDelete(note) {
+  const shared = !!(note.share && note.share.code);
+  if (!shared) return true; // nicht geteilt → keine Extra-Warnung nötig
+  const isOwner = note.ownedByMe !== false; // lokal erstellte Notizen gelten als eigene
+  return confirm(t(isOwner ? 'deleteSharedOwnerConfirm' : 'deleteSharedMemberConfirm'));
+}
+
+function removeNoteEverywhere(note) {
+  const shared = !!(note.share && note.share.code);
+  const isOwner = note.ownedByMe !== false;
+  if (shared && !isOwner && window.NZShare && NZShare.leaveNote) {
+    NZShare.leaveNote(note.id).catch(() => {}); // Mitgliedschaft in der Cloud lösen
+  }
+  data.notes = data.notes.filter((n) => n.id !== note.id);
+  persist();
 }
 
 function deleteNote() {
   const note = currentNote();
   if (!note) return;
-  if (!confirm(t('deleteNoteConfirm'))) return;
-  data.notes = data.notes.filter((n) => n.id !== note.id);
-  persist();
+  const shared = !!(note.share && note.share.code);
+  if (shared ? !confirmSharedDelete(note) : !confirm(t('deleteNoteConfirm'))) return;
+  removeNoteEverywhere(note);
   closeEditor();
   renderAll();
 }
 
-// Direkt aus der Liste löschen (per Wischen) – ohne Editor, ohne Extra-Bestätigung.
+// Direkt aus der Liste löschen (per Wischen) – geteilte Notizen fragen nach.
 function deleteNoteById(id) {
-  data.notes = data.notes.filter((n) => n.id !== id);
+  const note = data.notes.find((n) => n.id === id);
+  if (!note) return;
+  if (!confirmSharedDelete(note)) {
+    closeAllSwipes();
+    return;
+  }
+  removeNoteEverywhere(note);
   if (openSwipedCard) openSwipedCard = null;
   if (activeNoteId === id) closeEditor();
-  persist();
   renderAll();
 }
 
@@ -550,55 +965,205 @@ function cycleStatus(id) {
 
 // ---- Subtasks ----
 let doneGroupOpen = false; // erledigte Teilaufgaben: Gruppe auf/zu
+let deletedGroupOpen = false; // gelöschte Teilaufgaben: "Papierkorb"-Gruppe auf/zu
+
+// Wischen nach links deckt einen roten Lösch-Knopf auf (wie bei Notizen) – löscht NICHT sofort.
+let openSwipedSub = null;
+function closeSubSwipe(li) {
+  if (!li) return;
+  li.classList.remove('swiped');
+  if (openSwipedSub === li) openSwipedSub = null;
+}
+function attachSubSwipe(li, inner, stId) {
+  let startX = 0, startY = 0, dx = 0, decided = null, active = false, suppressClick = false;
+  inner.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    active = true; decided = null; dx = 0; startX = e.clientX; startY = e.clientY;
+  });
+  inner.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    const mx = e.clientX - startX, my = e.clientY - startY;
+    if (decided === null) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      decided = Math.abs(mx) > Math.abs(my) ? 'h' : 'v';
+      if (decided === 'h') {
+        if (openSwipedSub && openSwipedSub !== li) closeSubSwipe(openSwipedSub);
+        li.classList.add('dragging');
+        try { inner.setPointerCapture(e.pointerId); } catch {}
+      }
+    }
+    if (decided !== 'h') return;
+    suppressClick = true;
+    const base = li.classList.contains('swiped') ? -72 : 0;
+    dx = Math.max(-86, Math.min(0, base + mx));
+    inner.style.transform = 'translateX(' + dx + 'px)';
+    e.preventDefault();
+  });
+  const end = () => {
+    if (!active) return;
+    active = false;
+    li.classList.remove('dragging');
+    inner.style.transform = '';
+    if (decided === 'h') {
+      if (dx < -36) { li.classList.add('swiped'); openSwipedSub = li; }
+      else closeSubSwipe(li);
+    }
+  };
+  inner.addEventListener('pointerup', end);
+  inner.addEventListener('pointercancel', end);
+  // Tipp auf die geöffnete Zeile schließt den Swipe wieder (statt zu editieren).
+  inner.addEventListener('click', (e) => {
+    if (suppressClick) { suppressClick = false; return; }
+    if (li.classList.contains('swiped')) { e.preventDefault(); e.stopPropagation(); closeSubSwipe(li); }
+  }, true);
+}
 
 // Baut eine einzelne Teilaufgaben-Zeile (li) – für offene UND erledigte verwendet.
 function buildSubItem(st, note, noteShared) {
   const status = st.status || 'todo';
+  const isDeleted = !!st.deleted;
+  const readOnly = isDeleted || status === 'done'; // erledigte + gelöschte sind nicht editierbar
   const li = document.createElement('li');
-  li.className = 'sub-item' + (status === 'done' ? ' done' : '');
+  li.className = 'sub-item' + (status === 'done' ? ' done' : '') + (isDeleted ? ' deleted' : '');
+  const actions = isDeleted
+    ? `<button class="sub-restore" title="${t('restore')}">↩</button>
+       <button class="sub-del" title="${t('deleteForever')}">✕</button>`
+    : `<button class="sub-photo" title="${t(st.photo ? 'photo' : 'addPhoto')}">📷</button>`;
+  const swipeDel = isDeleted ? '' : `<button class="sub-swipe-del" title="${t('deleteSubtask')}">🗑</button>`;
   li.innerHTML = `
-      <span class="dot dot-${status}" title="${statusLabel(status)} ${t('clickToCycle')}"></span>
-      <input class="sub-text" type="text" value="" />
-      ${st.photo ? `<img class="sub-thumb" src="${st.photo}" alt="" />` : ''}
-      ${noteShared ? whoBadge(note, st) : ''}
-      <button class="sub-photo" title="${t(st.photo ? 'photo' : 'addPhoto')}">📷</button>
-      <button class="sub-del" title="${t('deleteSubtask')}">✕</button>`;
+      ${swipeDel}
+      <div class="sub-inner">
+        <span class="dot dot-${status}" title="${statusLabel(status)} ${t('clickToCycle')}"></span>
+        <input class="sub-text" type="text" value="" ${readOnly ? 'readonly' : ''} />
+        ${st.photo ? `<img class="sub-thumb" src="${st.photo}" alt="" />` : ''}
+        ${noteShared && !isDeleted ? whoBadge(note, st) : ''}
+        ${actions}
+      </div>`;
   const input = li.querySelector('.sub-text');
   input.value = st.text || '';
-  li.querySelector('.dot').onclick = () => cycleSubtask(st.id);
-  input.oninput = () => {
-    st.text = input.value;
-    note.updatedAt = Date.now();
-    scheduleSubSave();
-  };
-  input.onkeydown = (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      focusSubAdd();
-    }
-  };
-  li.querySelector('.sub-photo').onclick = () => pickSubtaskPhoto(st.id);
   const thumb = li.querySelector('.sub-thumb');
   if (thumb) thumb.onclick = () => openPhoto(st.id);
-  li.querySelector('.sub-del').onclick = () => deleteSubtask(st.id);
+  if (isDeleted) {
+    li.querySelector('.sub-restore').onclick = () => restoreSubtask(st.id);
+    li.querySelector('.sub-del').onclick = () => purgeSubtask(st.id);
+    return li;
+  }
+  // Punkt wechselt den Status (bei "erledigt" holt es die Aufgabe zurück zum Bearbeiten).
+  li.querySelector('.dot').onclick = () => cycleSubtask(st.id);
+  if (!readOnly) {
+    input.oninput = () => {
+      st.text = input.value;
+      note.updatedAt = Date.now();
+      scheduleSubSave();
+    };
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        focusSubAdd();
+      }
+    };
+    // Leere Teilaufgabe (nur Leerzeichen) beim Verlassen entfernen – leer ist nicht erlaubt.
+    input.onblur = () => {
+      if (!input.value.trim()) purgeSubtask(st.id);
+    };
+  }
+  li.querySelector('.sub-photo').onclick = () => pickSubtaskPhoto(st.id);
+  li.querySelector('.sub-swipe-del').onclick = () => deleteSubtask(st.id);
+  attachSubSwipe(li, li.querySelector('.sub-inner'), st.id); // Wischen deckt roten Lösch-Knopf auf
   return li;
+}
+
+// Einfache Notiz (ohne Teilaufgaben): Textfeld + Termin-Zeile im Editor pflegen.
+function updateSimpleNoteUI(note) {
+  const bodyEl = $('bodyInput');
+  const whenRow = $('whenRow');
+  if (!note) {
+    bodyEl.classList.add('hidden');
+    whenRow.classList.add('hidden');
+    return;
+  }
+  const liveSubs = (note.subtasks || []).filter((s) => !s.deleted);
+  // Textfeld zeigen, wenn die Notiz Text hat ODER (noch) keine Teilaufgaben.
+  const showBody = !!(note.body || liveSubs.length === 0);
+  bodyEl.classList.toggle('hidden', !showBody);
+  if (bodyEl.value !== (note.body || '')) bodyEl.value = note.body || '';
+  // Datum-Zeile immer anbieten → jede Notiz kann manuell zum Termin werden.
+  whenRow.classList.remove('hidden');
+  const wi = $('whenInput');
+  const val = note.when ? (String(note.when).includes('T') ? String(note.when).slice(0, 16) : note.when + 'T09:00') : '';
+  if (wi.value !== val) wi.value = val;
+  $('whenClear').classList.toggle('hidden', !note.when);
+  // Erinnerungs-Zeile nur bei Terminen: eigene Zeiten oder Standard.
+  const remRow = $('noteRemRow');
+  if (remRow) {
+    remRow.classList.toggle('hidden', !note.when);
+    if (note.when) {
+      const custom = Array.isArray(note.remLeads) && note.remLeads.length ? note.remLeads : null;
+      $('noteRemVal').textContent = custom
+        ? REM_LEADS.filter((o) => custom.includes(o.min)).map((o) => t(o.key + 'Short')).join(' · ')
+        : t('remStandard') + ' (' + reminderSummary() + ')';
+    }
+  }
+  renderRsvp(note);
+}
+
+// ---- "Wer ist dabei?" – Zusagen bei geteilten Terminen ----
+// Vorerst deaktiviert (auf Wunsch) – auf true stellen, um es zu aktivieren.
+const RSVP_ENABLED = false;
+
+function renderRsvp(note) {
+  const box = $('rsvpBox');
+  if (!box) return;
+  const show = RSVP_ENABLED && !!(note && note.when && note.share && note.share.code);
+  box.classList.toggle('hidden', !show);
+  if (!show) return;
+  const me = NZDevice.getId();
+  const mine = note.rsvp && note.rsvp[me] ? note.rsvp[me].v : null;
+  $('rsvpYes').classList.toggle('on', mine === 'yes');
+  $('rsvpNo').classList.toggle('on', mine === 'no');
+  const list = $('rsvpList');
+  list.innerHTML = '';
+  const entries = Object.values(note.rsvp || {}).sort((a, b) => (a.at || 0) - (b.at || 0));
+  entries.forEach((r) => {
+    const chip = document.createElement('span');
+    chip.className = 'rsvp-chip ' + (r.v === 'yes' ? 'yes' : 'no');
+    chip.textContent = (r.v === 'yes' ? '✓ ' : '✗ ') + (r.name || '?');
+    list.appendChild(chip);
+  });
+}
+
+function setRsvp(v) {
+  const note = currentNote();
+  if (!note) return;
+  if (!note.rsvp) note.rsvp = {};
+  const me = NZDevice.me();
+  const cur = note.rsvp[me.id];
+  if (cur && cur.v === v) delete note.rsvp[me.id]; // nochmal tippen = Antwort zurückziehen
+  else note.rsvp[me.id] = { v, name: me.nickname, at: Date.now() };
+  note.updatedAt = Date.now();
+  persist();
+  renderRsvp(note);
+  renderTermine();
 }
 
 function renderSubtasks() {
   const note = currentNote();
   const listEl = $('subList');
   listEl.innerHTML = '';
+  updateSimpleNoteUI(note);
   if (!note) return;
   if (!note.subtasks) note.subtasks = [];
 
   const noteShared = !!(note.share && note.share.code);
-  const active = note.subtasks.filter((s) => (s.status || 'todo') !== 'done');
-  const done = note.subtasks.filter((s) => (s.status || 'todo') === 'done');
+  const live = note.subtasks.filter((s) => !s.deleted); // nicht gelöschte
+  const active = live.filter((s) => (s.status || 'todo') !== 'done');
+  const done = live.filter((s) => (s.status || 'todo') === 'done');
+  const deleted = note.subtasks.filter((s) => s.deleted);
 
   // Offene zuerst, in ihrer normalen Reihenfolge.
   active.forEach((st) => listEl.appendChild(buildSubItem(st, note, noteShared)));
 
-  // Erledigte gebündelt in eine zusammenklappbare Gruppe ganz unten.
+  // Erledigte gebündelt in eine zusammenklappbare Gruppe.
   if (done.length) {
     const header = document.createElement('li');
     header.className = 'done-group' + (doneGroupOpen ? ' open' : '');
@@ -613,6 +1178,21 @@ function renderSubtasks() {
     }
   }
 
+  // Gelöschte ("Papierkorb") gebündelt ganz unten – wiederherstellbar.
+  if (deleted.length) {
+    const header = document.createElement('li');
+    header.className = 'done-group deleted-group' + (deletedGroupOpen ? ' open' : '');
+    header.innerHTML = `<span class="done-caret">▸</span><span class="done-label">${t('deletedGroup', { n: deleted.length })}</span>`;
+    header.onclick = () => {
+      deletedGroupOpen = !deletedGroupOpen;
+      renderSubtasks();
+    };
+    listEl.appendChild(header);
+    if (deletedGroupOpen) {
+      deleted.forEach((st) => listEl.appendChild(buildSubItem(st, note, noteShared)));
+    }
+  }
+
   applyAutoStatus(note);
   updateSubProgress(note);
   renderStatusRow(note.status || 'todo');
@@ -620,7 +1200,7 @@ function renderSubtasks() {
 }
 
 function updateSubProgress(note) {
-  const subs = note.subtasks || [];
+  const subs = (note.subtasks || []).filter((s) => !s.deleted);
   const done = subs.filter((s) => (s.status || 'todo') === 'done').length;
   $('subProgress').textContent = subs.length ? t('progressDone', { done, total: subs.length }) : '';
 }
@@ -672,11 +1252,38 @@ function whoBadge(note, st) {
 }
 
 function deleteSubtask(stId) {
+  // Soft-Delete: Teilaufgabe wandert in die "Gelöscht"-Gruppe (wiederherstellbar), statt weg zu sein.
+  const note = currentNote();
+  if (!note) return;
+  const st = (note.subtasks || []).find((s) => s.id === stId);
+  if (!st) return;
+  st.deleted = true;
+  st.deletedAt = Date.now();
+  note.updatedAt = Date.now();
+  applyAutoStatus(note);
+  persist();
+  renderSubtasks();
+  renderNoteList();
+}
+function restoreSubtask(stId) {
+  const note = currentNote();
+  if (!note) return;
+  const st = (note.subtasks || []).find((s) => s.id === stId);
+  if (!st) return;
+  delete st.deleted;
+  delete st.deletedAt;
+  note.updatedAt = Date.now();
+  applyAutoStatus(note);
+  persist();
+  renderSubtasks();
+  renderNoteList();
+}
+function purgeSubtask(stId) {
+  // Endgültig entfernen (aus der "Gelöscht"-Gruppe).
   const note = currentNote();
   if (!note) return;
   note.subtasks = note.subtasks.filter((s) => s.id !== stId);
   note.updatedAt = Date.now();
-  applyAutoStatus(note);
   persist();
   renderSubtasks();
   renderNoteList();
@@ -1042,9 +1649,14 @@ async function doUnshare() {
 function updateSharedBadge(note) {
   const shared = !!(note && note.share && note.share.code);
   $('sharedBadge').classList.toggle('hidden', !shared);
-  $('sharedBadge').textContent = shared
-    ? (note.ownedByMe === false ? t('sharedBy') : t('shared') + ' · ' + note.share.code)
-    : '';
+  if (!shared) { $('sharedBadge').textContent = ''; return; }
+  if (note.ownedByMe === false) {
+    // Notiz wurde MIT mir geteilt → Namen des Teilers zeigen (statt "jemand")
+    const name = (note.share.createdBy && note.share.createdBy.nickname) || t('someone');
+    $('sharedBadge').textContent = t('sharedByName', { name });
+  } else {
+    $('sharedBadge').textContent = t('shared') + ' · ' + note.share.code;
+  }
 }
 
 // Live-Präsenz (wer ist gerade in dieser Notiz?)
@@ -1150,6 +1762,12 @@ async function updateAccountUI() {
     $('accountBtn')._email = info.email;
     $('accountBtn').textContent = info.secured ? '✓ ' + info.email : t('backup');
     $('accountBtn').classList.toggle('secured', info.secured);
+    // Beim Start den echten Namen (@Username) als Geräte-Nickname übernehmen →
+    // steht dann bei Teilaufgaben/Push statt "Flinker Luchs".
+    if (window.NZProfile && NZProfile.getMyProfile) {
+      const p = await NZProfile.getMyProfile();
+      if (p && p.username && window.NZDevice) NZDevice.setProfile({ nickname: p.username });
+    }
   } catch {}
 }
 
@@ -1252,6 +1870,8 @@ async function loadUsernameField() {
   try {
     const p = await NZProfile.getMyProfile();
     $('usernameInput').value = p && p.username ? '@' + p.username : '';
+    // Echten Namen fuer die "wer war's"-Spur / Push uebernehmen (statt Zufallsname "Flinker Luchs")
+    if (p && p.username && window.NZDevice) NZDevice.setProfile({ nickname: p.username });
   } catch {}
 }
 async function saveUsername() {
@@ -1263,6 +1883,7 @@ async function saveUsername() {
     const display = (info && info.email) || NZDevice.me().nickname;
     const uname = await NZProfile.setUsername($('usernameInput').value, display);
     $('usernameInput').value = '@' + uname;
+    if (window.NZDevice) NZDevice.setProfile({ nickname: uname }); // Name mit Username syncen
     showSmallMsg(msg, t('usernameSaved'), false);
   } catch (e) {
     const m =
@@ -1512,6 +2133,7 @@ function micSupported() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 }
 function showVoiceError(msg) {
+  stopVoiceOrb();
   $('voiceError').textContent = msg;
   $('voiceError').classList.remove('hidden');
 }
@@ -1527,10 +2149,157 @@ function adjustVoice() {
   beginRecording();
 }
 
+// ---- Voice-Orb: pulsierende Kugel während der Aufnahme (à la ChatGPT-Voice) ----
+// Reagiert auf die echte Mikrofon-Lautstärke (Web/Android via AnalyserNode).
+// Auf iOS läuft die Aufnahme nativ (kein Web-Audio-Pegel) → lebendige Sprech-Simulation.
+let voiceOrb = null; // { raf, gl, actx }
+
+function startVoiceOrb(stream) {
+  stopVoiceOrb();
+  const canvas = $('voiceOrb');
+  const fallback = $('voicePulse');
+  if (!canvas) return;
+  let gl = null;
+  try { gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false }); } catch {}
+  if (!gl) {
+    canvas.classList.add('hidden');
+    if (fallback) fallback.classList.remove('hidden');
+    return;
+  }
+  canvas.classList.remove('hidden');
+  if (fallback) fallback.classList.add('hidden');
+
+  const vs = 'attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }';
+  const fs =
+    'precision highp float;\n' +
+    'uniform float u_time; uniform float u_level; uniform vec2 u_res;\n' +
+    'void main(){\n' +
+    '  vec2 uv = (gl_FragCoord.xy*2.0 - u_res) / min(u_res.x,u_res.y);\n' +
+    '  float d = length(uv);\n' +
+    '  float lv = clamp(u_level, 0.0, 1.0);\n' +
+    '  float R = 0.38 + lv*0.09;\n' +                 // Kugel atmet mit der Lautstärke
+    '  float sphere = smoothstep(R, R-0.02, d);\n' +
+    '  float w1 = abs(sin(d*14.0 - u_time*5.0)) * (0.03+lv*0.09) / max(abs(d-R-0.08), 0.02);\n' +
+    '  float w2 = abs(sin(d*9.0 - u_time*2.5)) * (0.015+lv*0.05) / max(abs(d-R-0.22), 0.03);\n' +
+    '  float glow = (0.04+lv*0.09) / max(d, 0.05);\n' +
+    '  float mesh = abs(sin(uv.x*18.0 + u_time*0.6)) * abs(sin(uv.y*18.0 - u_time*0.4));\n' +
+    '  vec3 teal = vec3(0.329, 0.859, 0.784);\n' +   // App-Akzent #54dbc8
+    '  vec3 col = teal * (w1 + w2 + glow) + teal * mesh * 0.10 * sphere;\n' +
+    '  col += vec3(1.0) * sphere * (0.03 + lv*0.05);\n' +
+    // Vignette: alles läuft deutlich VOR dem Canvas-Rand weich aus → keine sichtbare Box
+    '  float vign = smoothstep(0.95, 0.55, d);\n' +
+    '  col *= vign;\n' +
+    '  float a = clamp(max(max(col.r, col.g), col.b), 0.0, 1.0) * vign;\n' +
+    '  gl_FragColor = vec4(col, a);\n' +
+    '}';
+  function sh(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    canvas.classList.add('hidden');
+    if (fallback) fallback.classList.remove('hidden');
+    return;
+  }
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const pLoc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(pLoc);
+  gl.vertexAttribPointer(pLoc, 2, gl.FLOAT, false, 0, 0);
+  const uTime = gl.getUniformLocation(prog, 'u_time');
+  const uLevel = gl.getUniformLocation(prog, 'u_level');
+  const uRes = gl.getUniformLocation(prog, 'u_res');
+
+  // Echt-Pegel: Web/Android über AnalyserNode (Stream), iOS über das native
+  // NZRecorder-Metering (gepollt). Nur wenn beides fehlt → Sprech-Simulation.
+  let analyser = null;
+  let dataArr = null;
+  let actx = null;
+  if (stream && (window.AudioContext || window.webkitAudioContext)) {
+    try {
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = actx.createMediaStreamSource(stream);
+      analyser = actx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      dataArr = new Uint8Array(analyser.frequencyBinCount);
+    } catch {}
+  }
+  // iOS: nativen Pegel regelmäßig abfragen (AVAudioRecorder-Metering, wie beim Sprachmemo-Recorder)
+  let nativeRaw = -1; // -1 = (noch) kein nativer Pegel verfügbar
+  let levelTimer = null;
+  if (!stream && window.NZNative && NZNative.getRecordingLevel) {
+    levelTimer = setInterval(async () => {
+      const lv = await NZNative.getRecordingLevel();
+      if (lv === null) {
+        clearInterval(levelTimer);
+        levelTimer = null;
+        nativeRaw = -1; // Plugin fehlt (alte App) → Simulation
+        return;
+      }
+      // Sprache liegt linear grob bei 0.01–0.35 → verstärken, damit es sichtbar schwingt
+      nativeRaw = Math.min(1, Math.pow(lv, 0.6) * 1.6);
+    }, 66);
+  }
+  let level = 0;
+  let silentMs = 0;
+  let last = performance.now();
+  function frame(t) {
+    const dt = t - last;
+    last = t;
+    let raw = -1;
+    if (analyser) {
+      analyser.getByteTimeDomainData(dataArr);
+      let sum = 0;
+      for (let i = 0; i < dataArr.length; i++) {
+        const v = (dataArr[i] - 128) / 128;
+        sum += v * v;
+      }
+      raw = Math.min(1, Math.sqrt(sum / dataArr.length) * 4);
+    } else if (nativeRaw >= 0) {
+      raw = nativeRaw;
+    }
+    if (raw >= 0 && raw < 0.03) silentMs += dt; else silentMs = 0;
+    let target = Math.max(raw, 0.06); // nie ganz tot – leichter Grundpuls
+    if (raw < 0 || silentMs > 4000) {
+      // Kein echter Pegel verfügbar (oder sehr lange still) → dezente Sprech-Simulation
+      target = 0.3 + 0.18 * Math.sin(t * 0.004) + 0.14 * Math.sin(t * 0.011 + 1.7) + 0.1 * Math.sin(t * 0.023 + 0.5);
+      target = Math.max(0.08, target);
+    }
+    level += (target - level) * 0.35; // schnell folgen → schwingt WIE die Stimme, nicht hinterher
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(uTime, t * 0.001);
+    gl.uniform1f(uLevel, level);
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    voiceOrb.raf = requestAnimationFrame(frame);
+  }
+  voiceOrb = { raf: requestAnimationFrame(frame), gl, actx, levelTimer: () => levelTimer };
+}
+
+function stopVoiceOrb() {
+  if (!voiceOrb) return;
+  cancelAnimationFrame(voiceOrb.raf);
+  try { voiceOrb.actx && voiceOrb.actx.close(); } catch {}
+  try { const lt = voiceOrb.levelTimer && voiceOrb.levelTimer(); if (lt) clearInterval(lt); } catch {}
+  voiceOrb = null;
+}
+
 async function beginRecording() {
   $('voiceError').classList.add('hidden');
   $('voiceProcessing').classList.add('hidden');
   $('voiceConfirm').classList.add('hidden');
+  $('voiceAnswer').classList.add('hidden');
   $('voiceRecording').classList.remove('hidden');
   $('voiceTimer').textContent = '0:00';
   $('voiceModal').classList.remove('hidden');
@@ -1544,6 +2313,7 @@ async function beginRecording() {
       return;
     }
     nativeRecording = true;
+    startVoiceOrb(null); // nativer Recorder liefert keinen Web-Pegel → Simulation
     startVoiceTimer();
     return;
   }
@@ -1551,6 +2321,7 @@ async function beginRecording() {
   // Web/Android: MediaRecorder
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    startVoiceOrb(stream); // Orb reagiert auf die echte Lautstärke
     audioChunks = [];
     const useWebm = window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/webm');
     mediaRecorder = useWebm ? new MediaRecorder(stream, { mimeType: 'audio/webm' }) : new MediaRecorder(stream);
@@ -1614,7 +2385,7 @@ function closeVoice() {
   if (nativeRecording) {
     nativeRecording = false;
     try {
-      NZNative.stopNativeRecording();
+      NZNative.cancelNativeRecording ? NZNative.cancelNativeRecording() : NZNative.stopNativeRecording();
     } catch {}
   } else if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.onstop = null; // verwerfen, nicht verarbeiten
@@ -1623,36 +2394,131 @@ function closeVoice() {
     } catch {}
   }
   voiceDraft = null;
+  stopVoiceOrb();
+  try { window.speechSynthesis && speechSynthesis.cancel(); } catch {}
+  $('voiceAnswer').classList.add('hidden');
   $('voiceModal').classList.add('hidden');
 }
 
+// Kompakte Übersicht aller Notizen für die KI (Fragen beantworten, Termine finden).
+function notesDigest() {
+  return (data.notes || []).slice(0, 150).map((n) => ({
+    id: n.id,
+    title: n.title || '',
+    when: n.when || null,
+    body: (n.body || '').slice(0, 300),
+    items: (n.subtasks || [])
+      .filter((s) => !s.deleted)
+      .slice(0, 40)
+      .map((s) => s.text + ((s.status || 'todo') === 'done' ? ' ✓' : ''))
+  }));
+}
+
+// Antwort laut vorlesen (Sprachantwort) – eingebaute System-Stimme, kein Netz nötig.
+// Wählt die beste verfügbare Stimme (Enhanced/Premium/Siri klingen deutlich natürlicher
+// als die Standard-Roboterstimme – auf iOS je nach heruntergeladenen Stimmen).
+function pickVoice(langPrefix) {
+  try {
+    const voices = speechSynthesis.getVoices() || [];
+    const mine = voices.filter((v) => (v.lang || '').toLowerCase().startsWith(langPrefix));
+    if (!mine.length) return null;
+    return (
+      mine.find((v) => /siri/i.test(v.name)) ||
+      mine.find((v) => /premium|enhanced|erweitert/i.test(v.name)) ||
+      mine.find((v) => /anna|helena|samantha|ava/i.test(v.name)) ||
+      mine[0]
+    );
+  } catch {
+    return null;
+  }
+}
+
+function speak(text) {
+  try {
+    if (!text || !window.speechSynthesis) return;
+    speechSynthesis.cancel();
+    const en = window.NZI18N && NZI18N.lang === 'en';
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = en ? 'en-US' : 'de-DE';
+    const v = pickVoice(en ? 'en' : 'de');
+    if (v) u.voice = v;
+    u.rate = 1.04; // minimal flotter → klingt weniger leiernd
+    speechSynthesis.speak(u);
+  } catch {}
+}
+
 async function processVoice(blob) {
+  stopVoiceOrb();
   $('voiceRecording').classList.add('hidden');
   $('voiceConfirm').classList.add('hidden');
+  $('voiceAnswer').classList.add('hidden');
   $('voiceProcessing').classList.remove('hidden');
   try {
     const tp = blob.type || '';
     const ext = /m4a|aac/.test(tp) ? 'm4a' : /mp4|mpeg/.test(tp) ? 'mp4' : /ogg/.test(tp) ? 'ogg' : /wav/.test(tp) ? 'wav' : 'webm';
     const fd = new FormData();
     fd.append('file', blob, 'audio.' + ext);
+    fd.append('notes', JSON.stringify(notesDigest()));
+    fd.append('now', new Date().toString());
+    fd.append('lang', (window.NZI18N && NZI18N.lang) || 'de');
     if (voiceDraft) {
       fd.append(
         'context',
-        JSON.stringify({ title: voiceDraft.title, items: voiceDraft.items, shareWith: voiceDraft.shareWith })
+        JSON.stringify({
+          intent: voiceDraft.intent,
+          title: voiceDraft.title,
+          items: voiceDraft.items,
+          body: voiceDraft.body,
+          when: voiceDraft.when,
+          shareWith: voiceDraft.shareWith
+        })
       );
     }
     const res = await NZAI.voice(fd);
     voiceDraft = {
+      intent: res.intent || 'list',
       title: res.title || '',
       items: res.items || [],
+      body: res.body || '',
+      when: res.when || '',
+      answer: res.answer || '',
+      spoken: res.spoken || '',
+      matchedIds: res.matchedIds || [],
+      targetId: res.targetId || '',
       shareWith: (res.shareWith || '').trim(),
       summary: res.summary || ''
     };
-    showVoiceConfirm(voiceDraft);
+    if (voiceDraft.intent === 'query') showVoiceAnswer(voiceDraft);
+    else showVoiceConfirm(voiceDraft);
   } catch (e) {
     $('voiceProcessing').classList.add('hidden');
     showVoiceError(t('errGeneric') + (e.message || e));
   }
+}
+
+// Frage-Modus: Antwort anzeigen (+ vorlesen) statt eine Notiz zu erstellen.
+function showVoiceAnswer(draft) {
+  $('voiceProcessing').classList.add('hidden');
+  $('voiceRecording').classList.add('hidden');
+  $('voiceConfirm').classList.add('hidden');
+  $('voiceAnswerText').textContent = draft.answer || t('queryNoAnswer');
+  const chips = $('voiceAnswerNotes');
+  chips.innerHTML = '';
+  (draft.matchedIds || []).forEach((id) => {
+    const n = data.notes.find((x) => x.id === id);
+    if (!n) return;
+    const b = document.createElement('button');
+    b.className = 'friend-chip';
+    b.textContent = '📄 ' + (n.title || t('untitled'));
+    b.onclick = () => {
+      closeVoice();
+      openNote(n.id);
+    };
+    chips.appendChild(b);
+  });
+  $('voiceAnswer').classList.remove('hidden');
+  // Kurzfassung sprechen (nicht den ganzen Text) – klingt knackiger.
+  speak(draft.spoken || draft.answer);
 }
 
 // Zeigt, was die KI verstanden hat → der Nutzer bestätigt oder bessert nach.
@@ -1660,8 +2526,26 @@ function showVoiceConfirm(draft) {
   $('voiceProcessing').classList.add('hidden');
   $('voiceRecording').classList.add('hidden');
   $('voiceSummary').textContent = draft.summary || '';
-  $('voicePreviewTitle').textContent = draft.title || t('newList');
-  $('voicePreviewItems').innerHTML = (draft.items || []).map((it) => `<li>${escapeHtml(it)}</li>`).join('');
+  const isNote = draft.intent === 'note';
+  const isEdit = draft.intent === 'edit';
+  const target = isEdit ? data.notes.find((n) => n.id === draft.targetId) : null;
+  $('voicePreviewTitle').textContent = draft.title || (target && target.title) || t('newList');
+  $('voicePreviewItems').innerHTML = isNote || isEdit ? '' : (draft.items || []).map((it) => `<li>${escapeHtml(it)}</li>`).join('');
+  const bodyEl = $('voicePreviewBody');
+  if ((isNote || isEdit) && draft.body) {
+    bodyEl.textContent = draft.body;
+    bodyEl.classList.remove('hidden');
+  } else {
+    bodyEl.classList.add('hidden');
+  }
+  const whenEl = $('voicePreviewWhen');
+  if ((isNote || isEdit) && draft.when) {
+    whenEl.textContent = '📅 ' + formatWhen(draft.when);
+    whenEl.classList.remove('hidden');
+  } else {
+    whenEl.classList.add('hidden');
+  }
+  $('voiceConfirmBtn').textContent = isEdit ? t('voiceConfirmEdit') : t('voiceConfirm');
   const shareEl = $('voicePreviewShare');
   if (draft.shareWith) {
     shareEl.textContent = '🔗 ' + t('voiceShareLine', { who: draft.shareWith });
@@ -1672,11 +2556,73 @@ function showVoiceConfirm(draft) {
   $('voiceConfirm').classList.remove('hidden');
 }
 
+// "2026-07-15T20:00" → "Mi., 15. Juli, 20:00" (bzw. nur Datum ohne Uhrzeit).
+function formatWhen(when) {
+  if (!when) return '';
+  try {
+    const hasTime = when.includes('T');
+    const d = new Date(hasTime ? when : when + 'T12:00');
+    if (isNaN(d.getTime())) return when;
+    const loc = (window.NZI18N && NZI18N.lang === 'en') ? 'en-US' : 'de-DE';
+    const date = d.toLocaleDateString(loc, { weekday: 'short', day: 'numeric', month: 'long' });
+    if (!hasTime) return date;
+    return date + ', ' + d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return when;
+  }
+}
+
+// Einfache Notiz (ohne Teilaufgaben) aus der KI-Antwort erstellen.
+// Termin-Notizen werden NUR eingefügt (nicht geöffnet) – sie landen im Termine-Tab.
+function createSimpleNoteFromAI(title, body, when) {
+  const note = NZ.makeNote({
+    title: title || t('untitled'),
+    body: body || '',
+    folder: currentFolder === '__all__' ? '' : currentFolder
+  });
+  if (when) note.when = when;
+  data.notes.unshift(note);
+  persist();
+  renderAll();
+  if (when) {
+    // kurz den Termine-Tab zeigen, damit man sieht, wo der Termin gelandet ist
+    renderTermine();
+    document.body.classList.remove('editor-open', 'search-open');
+    document.body.classList.add('termine-open');
+    setActiveTab('termine');
+  } else {
+    openNote(note.id);
+  }
+}
+
 function confirmVoice() {
   const draft = voiceDraft;
   if (!draft) return;
   $('voiceModal').classList.add('hidden');
-  if (voiceTargetId && data.notes.find((n) => n.id === voiceTargetId)) {
+  if (draft.intent === 'edit') {
+    // Bestehenden Termin/Notiz ändern – nur die Felder, die die KI neu geliefert hat.
+    const target = data.notes.find((n) => n.id === draft.targetId);
+    if (target) {
+      if (draft.when) target.when = draft.when;
+      if (draft.title) target.title = draft.title;
+      if (draft.body) target.body = draft.body;
+      target.termDone = false; // verschobener Termin ist wieder "offen"
+      target.updatedAt = Date.now();
+      persist();
+      renderAll();
+      if (target.when) {
+        renderTermine();
+        document.body.classList.remove('editor-open', 'search-open');
+        document.body.classList.add('termine-open');
+        setActiveTab('termine');
+      }
+    }
+    voiceDraft = null;
+    return;
+  }
+  if (draft.intent === 'note') {
+    createSimpleNoteFromAI(draft.title, draft.body, draft.when);
+  } else if (voiceTargetId && data.notes.find((n) => n.id === voiceTargetId)) {
     fillNoteFromVoice(voiceTargetId, draft.title, draft.items);
   } else {
     createNoteFromAI(draft.title, draft.items);
@@ -1696,6 +2642,13 @@ $('voiceStop').onclick = stopVoice;
 $('voiceConfirmBtn').onclick = confirmVoice;
 $('voiceAdjustBtn').onclick = adjustVoice;
 $('voiceClose').onclick = closeVoice;
+$('voiceAnswerOk').onclick = closeVoice;
+$('termineAddBtn').onclick = newTermin;
+$('termineVoiceBtn').onclick = () => startVoice();
+$('voiceAnswerAgain').onclick = () => {
+  voiceDraft = null; // neue Frage, kein Anpassungs-Kontext
+  beginRecording();
+};
 $('sortBtn').onclick = aiSort;
 $('newFolderBtn').onclick = newFolder;
 $('deleteBtn').onclick = deleteNote;
@@ -1704,6 +2657,7 @@ document.querySelectorAll('#emptyList .tpl-tile').forEach((b) => {
   b.onclick = () => startTemplate(b.dataset.tpl);
 });
 $('fillChoiceVoice').onclick = fillChoiceVoice;
+$('fillChoicePhoto').onclick = fillChoicePhoto;
 $('fillChoiceType').onclick = fillChoiceType;
 $('fillChoiceClose').onclick = closeFillChoice;
 $('fillChoiceModal').addEventListener('click', (e) => {
@@ -1715,6 +2669,29 @@ if ($('langToggle')) $('langToggle').onclick = toggleLanguage;
 
 titleInput.oninput = scheduleSave;
 folderSelect.onchange = scheduleSave;
+$('bodyInput').oninput = scheduleSave;
+$('whenInput').onchange = () => {
+  const note = currentNote();
+  if (!note) return;
+  note.when = $('whenInput').value || null;
+  updateSimpleNoteUI(note); // Erinnerungs-Zeile + ✕ mitziehen
+  scheduleSave();
+};
+$('whenClear').onclick = () => {
+  const note = currentNote();
+  if (!note) return;
+  note.when = null;
+  $('whenInput').value = '';
+  $('whenClear').classList.add('hidden');
+  $('noteRemRow').classList.add('hidden');
+  scheduleSave();
+};
+$('noteRemRow').onclick = () => {
+  const note = currentNote();
+  if (note && note.when) openReminderModal(note);
+};
+$('rsvpYes').onclick = () => setRsvp('yes');
+$('rsvpNo').onclick = () => setRsvp('no');
 
 $('searchInput').oninput = (e) => {
   searchTerm = e.target.value;
@@ -1798,9 +2775,10 @@ if (window.NZNative && NZNative.isNative()) {
 
   // Push registrieren – ABER nur wenn Firebase eingerichtet ist (sonst nativer Absturz).
   if (window.NZ_CONFIG && NZ_CONFIG.PUSH) {
+    const plat = (window.Capacitor && Capacitor.getPlatform && Capacitor.getPlatform()) || 'android';
     NZStore.ready.then(() => {
       NZNative.registerPush((token) => {
-        if (window.NZShare && NZShare.savePushToken) NZShare.savePushToken(token, 'android');
+        if (window.NZShare && NZShare.savePushToken) NZShare.savePushToken(token, plat);
       }).catch(() => {});
     });
   }
@@ -1919,9 +2897,218 @@ function setNav(open) {
   document.body.classList.toggle('nav-open', open);
   $('scrim').classList.toggle('hidden', !open);
 }
-$('menuBtn').onclick = () => setNav(!document.body.classList.contains('nav-open'));
+// ---- Bottom-Navigation (mobil) – ersetzt das ☰-Menü ----
+function setActiveTab(name) {
+  document.querySelectorAll('#bottomNav .bnav-item').forEach((b) => b.classList.toggle('active', b.dataset.nav === name));
+}
+document.querySelectorAll('#bottomNav .bnav-item').forEach((btn) => {
+  btn.onclick = () => {
+    const nav = btn.dataset.nav;
+    if (nav === 'notes') {
+      document.body.classList.remove('editor-open', 'search-open', 'termine-open', 'settings-open');
+      setNav(false);
+      setActiveTab('notes');
+    } else if (nav === 'termine') {
+      document.body.classList.remove('editor-open', 'search-open', 'settings-open');
+      renderTermine();
+      document.body.classList.add('termine-open');
+      setNav(false);
+      setActiveTab('termine');
+    } else if (nav === 'friends') {
+      const fb = $('friendsBtn');
+      if (fb && !fb.classList.contains('hidden')) fb.click();
+      else $('joinBtn').click();
+    } else if (nav === 'search') {
+      document.body.classList.remove('termine-open', 'settings-open');
+      const on = document.body.classList.toggle('search-open');
+      setActiveTab(on ? 'search' : 'notes');
+      if (on) setTimeout(() => { const s = $('searchInput'); if (s) s.focus(); }, 60);
+    } else if (nav === 'settings') {
+      openSettings();
+    }
+  };
+});
+
+// ---- Termin-Erinnerungen: Einstellungs-Dialog ----
+function reminderSummary() {
+  if (!remOn()) return t('off');
+  const leads = remLeads();
+  const labels = REM_LEADS.filter((o) => leads.includes(o.min)).map((o) => t(o.key + 'Short'));
+  return labels.length ? labels.join(' · ') : t('off');
+}
+
+// Das Modal arbeitet in zwei Modi: global (aus den Einstellungen) oder pro Termin
+// (aus dem Editor). Pro-Termin-Zeiten (note.remLeads) haben Vorrang vor der globalen Einstellung.
+let remModalNote = null; // null = globaler Modus
+
+function renderReminderModal() {
+  const tgl = $('reminderToggle');
+  const box = $('reminderChips');
+  box.innerHTML = '';
+  if (remModalNote) {
+    // Pro-Termin: Switch = "Standardeinstellung verwenden"
+    const usingDefault = !(Array.isArray(remModalNote.remLeads) && remModalNote.remLeads.length);
+    $('reminderToggleLbl').textContent = t('useDefault');
+    tgl.classList.toggle('on', usingDefault);
+    tgl.setAttribute('aria-checked', usingDefault ? 'true' : 'false');
+    const leads = usingDefault ? (remOn() ? remLeads() : []) : remModalNote.remLeads;
+    REM_LEADS.forEach((o) => {
+      const b = document.createElement('button');
+      b.className = 'rchip' + (leads.includes(o.min) ? ' on' : '');
+      b.textContent = t(o.key);
+      b.onclick = () => {
+        if (usingDefault) return; // erst den Standard-Schalter ausschalten
+        let cur = remModalNote.remLeads || [];
+        if (cur.includes(o.min)) cur = cur.filter((x) => x !== o.min);
+        else cur = [...cur, o.min];
+        remModalNote.remLeads = cur;
+        remModalNote.updatedAt = Date.now();
+        persist();
+        renderReminderModal();
+      };
+      box.appendChild(b);
+    });
+    box.classList.toggle('dimmed', usingDefault);
+  } else {
+    $('reminderToggleLbl').textContent = t('remindersOn');
+    tgl.classList.toggle('on', remOn());
+    tgl.setAttribute('aria-checked', remOn() ? 'true' : 'false');
+    const leads = remLeads();
+    REM_LEADS.forEach((o) => {
+      const b = document.createElement('button');
+      b.className = 'rchip' + (leads.includes(o.min) ? ' on' : '');
+      b.textContent = t(o.key);
+      b.onclick = () => {
+        let cur = remLeads();
+        if (cur.includes(o.min)) cur = cur.filter((x) => x !== o.min);
+        else cur.push(o.min);
+        localStorage.setItem('nz_rem_leads', JSON.stringify(cur));
+        renderReminderModal();
+        scheduleReminderRefresh();
+      };
+      box.appendChild(b);
+    });
+    box.classList.toggle('dimmed', !remOn());
+  }
+}
+
+function openReminderModal(note) {
+  remModalNote = note || null;
+  renderReminderModal();
+  $('reminderPermHint').classList.add('hidden');
+  $('reminderModal').classList.remove('hidden');
+}
+
+$('setReminderRow').onclick = () => openReminderModal();
+
+// ---- Morgen-Briefing: Dialog ----
+function renderBriefModal() {
+  $('briefToggle').classList.toggle('on', briefOn());
+  $('briefTime').value = briefTime();
+}
+$('setBriefRow').onclick = () => {
+  renderBriefModal();
+  $('briefingModal').classList.remove('hidden');
+};
+$('briefClose').onclick = () => {
+  $('briefingModal').classList.add('hidden');
+  if ($('setBriefVal')) $('setBriefVal').textContent = briefSummary();
+};
+$('briefToggle').onclick = async () => {
+  const turningOn = !briefOn();
+  localStorage.setItem('nz_brief_on', turningOn ? '1' : '0');
+  if (turningOn && window.NZNative && NZNative.requestReminderPermission) await NZNative.requestReminderPermission();
+  renderBriefModal();
+  scheduleReminderRefresh();
+};
+$('briefTime').onchange = () => {
+  localStorage.setItem('nz_brief_time', $('briefTime').value || '08:00');
+  scheduleReminderRefresh();
+};
+$('reminderClose').onclick = () => {
+  $('reminderModal').classList.add('hidden');
+  if ($('setReminderVal')) $('setReminderVal').textContent = reminderSummary();
+  if (remModalNote) updateSimpleNoteUI(currentNote());
+  remModalNote = null;
+};
+$('reminderToggle').onclick = async () => {
+  if (remModalNote) {
+    // Pro-Termin: Standard verwenden <-> eigene Zeiten
+    const usingDefault = !(Array.isArray(remModalNote.remLeads) && remModalNote.remLeads.length);
+    if (usingDefault) remModalNote.remLeads = remOn() ? [...remLeads()] : [60];
+    else remModalNote.remLeads = null;
+    remModalNote.updatedAt = Date.now();
+    persist();
+    renderReminderModal();
+    return;
+  }
+  const turningOn = !remOn();
+  localStorage.setItem('nz_rem_on', turningOn ? '1' : '0');
+  if (turningOn && window.NZNative && NZNative.requestReminderPermission) {
+    const ok = await NZNative.requestReminderPermission();
+    $('reminderPermHint').classList.toggle('hidden', ok);
+  }
+  renderReminderModal();
+  scheduleReminderRefresh();
+};
+
+// ---- Einstellungen-Screen (nutzt die bestehende Theme-/Sprache-/Konto-Logik) ----
+function openSettings() {
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  if ($('setThemeVal')) $('setThemeVal').textContent = isDark ? t('themeDark') : t('themeLight');
+  if ($('setReminderVal')) $('setReminderVal').textContent = reminderSummary();
+  if ($('setBriefVal')) $('setBriefVal').textContent = briefSummary();
+  if ($('setLangVal')) {
+    const lang = (window.NZI18N && typeof NZI18N.lang === 'function') ? NZI18N.lang() : (document.documentElement.lang || 'de');
+    $('setLangVal').textContent = String(lang).toUpperCase();
+  }
+  // Profil-Karte: Name + Avatar-Initiale + E-Mail/@username
+  const nick = (window.NZDevice && NZDevice.getProfile().nickname) || '';
+  if ($('setPName')) $('setPName').textContent = nick || t('untitled');
+  if ($('setAvatar')) $('setAvatar').textContent = (nick.trim()[0] || '?').toUpperCase();
+  if ($('setAccountSub')) {
+    const acc = $('accountBtn');
+    const email = (acc && acc._email) || '';
+    $('setAccountSub').textContent = email || 'Nicht angemeldet';
+    // Name/@username ergaenzen, falls Cloud-Profil vorhanden
+    if (window.NZProfile && NZProfile.getMyProfile) {
+      NZProfile.getMyProfile().then((p) => {
+        if (p && p.username && $('setAccountSub')) {
+          $('setAccountSub').textContent = (email ? email + '  ·  ' : '') + '@' + p.username;
+        }
+      }).catch(() => {});
+    }
+  }
+  if ($('setVersion') && $('appVersion')) $('setVersion').textContent = $('appVersion').textContent;
+  // Vollbild-Screen einblenden (wie Termine-Tab)
+  document.body.classList.remove('editor-open', 'search-open', 'termine-open');
+  document.body.classList.add('settings-open');
+  setActiveTab('settings');
+}
+function closeSettings() { document.body.classList.remove('settings-open'); }
+$('setThemeRow').onclick = () => { $('themeToggle').click(); openSettings(); };
+$('setLangRow').onclick = () => { if ($('langToggle')) $('langToggle').click(); openSettings(); };
+$('setAccountRow').onclick = () => { $('accountBtn').click(); };
+
+// ---- Suche schließen / Tastatur wegtippen ----
+if ($('searchClose')) $('searchClose').onclick = () => {
+  const s = $('searchInput');
+  if (s) { s.value = ''; s.dispatchEvent(new Event('input')); s.blur(); }
+  document.body.classList.remove('search-open');
+  setActiveTab('notes');
+};
+if ($('searchInput')) $('searchInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } // Enter schließt die Tastatur
+});
 $('scrim').onclick = () => setNav(false);
-$('backBtn').onclick = () => document.body.classList.remove('editor-open');
+$('backBtn').onclick = () => {
+  document.body.classList.remove('editor-open');
+  // Plus gedrückt, nichts eingegeben, zurück → leere Notiz gar nicht erst behalten.
+  if (activeNoteId && discardIfEmpty(activeNoteId)) {
+    closeEditor();
+    renderAll();
+  }
+};
 
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
