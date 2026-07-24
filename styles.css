@@ -1095,6 +1095,13 @@ body:not(.termine-open) .termine-screen { display: none; }
 .agenda-today .agenda-label { color: var(--accent); }
 .agenda ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .agenda-item {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+}
+.agenda-inner {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1103,10 +1110,25 @@ body:not(.termine-open) .termine-screen { display: none; }
   border-radius: 14px;
   padding: 10px 12px;
   cursor: pointer;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition: transform 0.2s ease, border-color 0.15s ease;
+  touch-action: pan-y; /* vertikal scrollen, horizontal = Wischen */
 }
-.agenda-item:active { transform: scale(0.985); }
-.agenda-item:hover { border-color: var(--accent); }
+.agenda-item.swiped .agenda-inner { transform: translateX(-72px); }
+.agenda-item.dragging .agenda-inner { transition: none; }
+.agenda-inner:hover { border-color: var(--accent); }
+.agenda-del {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 72px;
+  border: none;
+  border-radius: 0 14px 14px 0;
+  background: #e5484d;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+}
 .agenda-tile {
   flex: 0 0 44px;
   height: 46px;
@@ -1341,6 +1363,110 @@ body:not(.settings-open) .settings-screen { display: none; }
 }
 .switch.on { background: var(--accent); }
 .switch.on .knob { transform: translateX(20px); }
+/* Ort pro Teilaufgabe: beschrifteter Chip ("📍 Ort" bzw. "📍 Rewe") */
+.sub-place {
+  flex: 0 0 auto;
+  max-width: 96px;
+  background: var(--bg-3);
+  border: 1px dashed var(--border);
+  border-radius: 11px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub-place.on {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent);
+}
+/* "Termin hinzufügen"-Knopf (statt offenem Datumsfeld – schützt vor Versehen) */
+.when-add {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.when-add:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Einkaufs-Orte */
+.places-list { list-style: none; margin-bottom: 14px; display: flex; flex-direction: column; gap: 8px; }
+.places-list:empty { margin-bottom: 4px; }
+.place-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+.place-row .place-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.place-row .place-radius { padding: 5px 8px; font-size: 12.5px; }
+.places-perm { color: #ff9f43; }
+
+/* Radar-Animation: Standort wird ermittelt */
+.place-locating {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 0 22px;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.radar {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.radar-pin {
+  font-size: 34px;
+  z-index: 1;
+  animation: pin-bounce 1.2s ease-in-out infinite;
+}
+.radar-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: radar-ping 2.1s ease-out infinite;
+}
+.radar-ring.r2 { animation-delay: 0.7s; }
+.radar-ring.r3 { animation-delay: 1.4s; }
+@keyframes radar-ping {
+  0% { transform: scale(0.25); opacity: 0.9; }
+  100% { transform: scale(1.1); opacity: 0; }
+}
+@keyframes pin-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
 .brief-time-row {
   display: flex;
   align-items: center;
@@ -2024,22 +2150,44 @@ body:not(.settings-open) .settings-screen { display: none; }
   position: relative;
   overflow: hidden;
   padding: 0;
+  margin-bottom: 8px;
+  border-radius: 12px;
   touch-action: pan-y;
 }
 .sub-item:hover { background: transparent; }
+/* Teilaufgabe als Mini-Karte: oben Punkt+Text, darunter Meta (Person · Ort · Foto) */
 .sub-inner {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 4px;
-  border-radius: 8px;
-  background: var(--bg-2);
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--glass, var(--bg-2));
+  border: 1px solid var(--glass-border, var(--border));
   transform: translateX(0);
-  transition: transform 0.18s ease;
+  transition: transform 0.18s ease, border-color 0.15s ease;
   position: relative;
   z-index: 1;
 }
-.sub-item:hover .sub-inner { background: var(--bg-3); }
+.sub-item:hover .sub-inner { border-color: var(--accent); }
+.sub-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.sub-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-left: 26px; /* unter dem Text ausgerichtet (Punkt + Abstand) */
+  min-width: 0;
+}
+.sub-meta .sub-photo { margin-left: auto; opacity: 0.7; font-size: 16px; padding: 2px 6px; }
+.sub-meta .sub-thumb { width: 34px; height: 34px; }
+.sub-meta .sub-who {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-item.deleted .sub-inner { opacity: 0.55; }
 .sub-item.dragging .sub-inner { transition: none; }
 .sub-item.swiped .sub-inner { transform: translateX(-72px); }
 .sub-swipe-del {

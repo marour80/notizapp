@@ -25,13 +25,35 @@
     return /login-callback/i.test(url || '');
   }
 
+  // App-interne Routen (z.B. vom Widget): smartnote://voice, smartnote://termine
+  function isRouteUrl(url) {
+    return /:\/\/(voice|termine)/i.test(url || '');
+  }
+
+  // Widget-Tipps & Co.: smartnote://voice → Sprachaufnahme, smartnote://termine → Termine-Tab.
+  function onAppRoute(routes) {
+    const App = plugin('App');
+    if (!App) return;
+    const route = (url) => {
+      if (!url) return;
+      if (/:\/\/voice/i.test(url) && routes.voice) routes.voice();
+      else if (/:\/\/termine/i.test(url) && routes.termine) routes.termine();
+    };
+    App.addListener('appUrlOpen', (d) => route(d && d.url));
+    if (App.getLaunchUrl) {
+      App.getLaunchUrl()
+        .then((r) => route(r && r.url))
+        .catch(() => {});
+    }
+  }
+
   // Tiefen-Link: smartnote://join?code=XXX → ruft handler(code). Login-Rückleitung wird ignoriert.
   function onDeepLink(handler) {
     const App = plugin('App');
     if (!App) return;
     App.addListener('appUrlOpen', (data) => {
       const url = (data && data.url) || '';
-      if (isAuthCallback(url)) return; // OAuth → onAuthCallback
+      if (isAuthCallback(url) || isRouteUrl(url)) return; // OAuth → onAuthCallback, Routen → onAppRoute
       const code = parseCode(url);
       if (code) handler(code);
     });
@@ -39,7 +61,7 @@
     if (App.getLaunchUrl) {
       App.getLaunchUrl()
         .then((res) => {
-          if (res && res.url && !isAuthCallback(res.url)) {
+          if (res && res.url && !isAuthCallback(res.url) && !isRouteUrl(res.url)) {
             const c = parseCode(res.url);
             if (c) handler(c);
           }
@@ -316,6 +338,57 @@
     return true;
   }
 
+  // ---- Einkaufs-Orte (Geofencing): Erinnerung bei Ankunft am Laden ----
+  function geoAvailable() {
+    return !!plugin('NZGeo');
+  }
+  async function geoRequestPermission() {
+    const G = plugin('NZGeo');
+    if (!G) return 'unavailable';
+    try {
+      const r = await G.requestPermission();
+      return (r && r.status) || 'prompt';
+    } catch {
+      return 'denied';
+    }
+  }
+  async function geoAuthStatus() {
+    const G = plugin('NZGeo');
+    if (!G) return 'unavailable';
+    try {
+      const r = await G.authStatus();
+      return (r && r.status) || 'prompt';
+    } catch {
+      return 'denied';
+    }
+  }
+  async function geoCurrentPosition() {
+    const G = plugin('NZGeo');
+    if (!G) return null;
+    const r = await G.currentPosition();
+    return r && typeof r.lat === 'number' ? { lat: r.lat, lng: r.lng } : null;
+  }
+  async function geoSetPlaces(places) {
+    const G = plugin('NZGeo');
+    if (!G) return false;
+    try {
+      await G.setPlaces({ places: places || [] });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async function geoSetSummary(count, body, map) {
+    const G = plugin('NZGeo');
+    if (!G) return false;
+    try {
+      await G.setSummary({ count: count || 0, body: body || '', map: map || {} });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // ---- Homescreen-Widget: Termin-Daten in die App Group schieben ----
   async function updateWidget(list) {
     const W = plugin('NZWidget');
@@ -348,5 +421,5 @@
     });
   }
 
-  global.NZNative = { isNative, onDeepLink, onAuthCallback, scanAvailable, scanQR, cameraAvailable, takePhoto, openUrl, closeBrowser, nativeRecordAvailable, startNativeRecording, stopNativeRecording, cancelNativeRecording, getRecordingLevel, registerPush, remindersAvailable, requestReminderPermission, replaceReminders, initTermActions, updateWidget, parseCode, plugin, initKeyboard };
+  global.NZNative = { isNative, onDeepLink, onAppRoute, onAuthCallback, scanAvailable, scanQR, cameraAvailable, takePhoto, openUrl, closeBrowser, nativeRecordAvailable, startNativeRecording, stopNativeRecording, cancelNativeRecording, getRecordingLevel, registerPush, remindersAvailable, requestReminderPermission, replaceReminders, initTermActions, updateWidget, geoAvailable, geoRequestPermission, geoAuthStatus, geoCurrentPosition, geoSetPlaces, geoSetSummary, parseCode, plugin, initKeyboard };
 })(typeof window !== 'undefined' ? window : globalThis);

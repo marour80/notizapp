@@ -87,6 +87,11 @@ function notifyShared(info) {
   renderAll();
   scheduleReminderRefresh(); // geplante Termin-Erinnerungen an den aktuellen Stand angleichen
 
+  // Einkaufs-Orte nach App-Start erneut beim System registrieren (robust nach Updates)
+  if (window.NZNative && NZNative.geoSetPlaces && getPlaces().length) {
+    NZNative.geoSetPlaces(getPlaces());
+  }
+
   // "Termin vorbei – erledigt?"-Buttons: Antwort verarbeiten (kommt auch aus dem Hintergrund).
   if (window.NZNative && NZNative.initTermActions) {
     NZNative.initTermActions(
@@ -139,7 +144,16 @@ function toggleLanguage() {
 
 // Live-sync when another window/tab/device changes notes
 NZStore.onChanged(async (info) => {
-  data = await NZStore.load();
+  const fresh = await NZStore.load();
+  // Pro Notiz gewinnt die NEUERE Version: Der Reload darf gerade gemachte lokale
+  // Änderungen (z.B. Ort-Zuweisung, deren Upload noch läuft) nicht überschreiben –
+  // das ließ Zuweisungen "wieder verschwinden".
+  const prevById = new Map((data.notes || []).map((n) => [n.id, n]));
+  fresh.notes = (fresh.notes || []).map((n) => {
+    const p = prevById.get(n.id);
+    return p && (p.updatedAt || 0) > (n.updatedAt || 0) ? p : n;
+  });
+  data = fresh;
   renderAll();
 
   // Offene Notiz wurde gelöscht?
@@ -151,19 +165,23 @@ NZStore.onChanged(async (info) => {
   // Offene Notiz wurde von jemandem geändert → Teilaufgaben live nachziehen
   // (ohne Titel/Text zu überschreiben, falls gerade getippt wird).
   if (info && info.id && info.id === activeNoteId) {
-    const editing = document.activeElement && document.activeElement.classList.contains('sub-text');
+    const editing = document.activeElement && (document.activeElement.classList.contains('sub-text') || document.activeElement.classList.contains('sub-place'));
     if (!editing) {
       renderSubtasks();
       updateSharedBadge(currentNote());
     }
   }
 
-  // In-App-Hinweis: jemand arbeitet an einer geteilten Notiz.
-  notifyShared(info);
+  // In-App-Hinweis: NUR wenn jemand ANDERES an einer geteilten Notiz arbeitet.
+  // (Eigene Saves schreiben alle Notizen → ohne diesen Filter kamen Toasts für
+  // jede eigene geteilte Notiz, obwohl niemand anderes etwas geändert hat.)
+  if (!(info && info.self)) {
+    notifyShared(info);
 
-  // Zusätzlich System-Benachrichtigung, wenn das Fenster nicht im Fokus ist.
-  if (info && info.id && !document.hasFocus()) {
-    notifyChange(info.title);
+    // Zusätzlich System-Benachrichtigung, wenn das Fenster nicht im Fokus ist.
+    if (info && info.id && !document.hasFocus()) {
+      notifyChange(info.title);
+    }
   }
 });
 
@@ -311,6 +329,8 @@ async function rescheduleReminders() {
 
   NZNative.replaceReminders(items);
 
+  updateGeoSummary(); // Einkaufs-Orte: offene Punkte für die Ankunfts-Push aktualisieren
+
   // Homescreen-Widget mit den nächsten Terminen versorgen
   if (NZNative.updateWidget) {
     const widgetList = (data.notes || [])
@@ -320,6 +340,131 @@ async function rescheduleReminders() {
       .map((n) => ({ id: n.id, title: n.title || t('untitled'), when: String(n.when) }));
     NZNative.updateWidget(widgetList);
   }
+}
+
+// ---- Einkaufs-Orte (Geofencing): Erinnerung, wenn man am Laden ankommt ----
+const PLACE_RADII = [100, 150, 250, 400, 700, 1000]; // Meter – pro Ort wählbar
+
+function getPlaces() {
+  try {
+    const a = JSON.parse(localStorage.getItem('nz_places') || '[]');
+    return Array.isArray(a) ? a : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePlaces(places) {
+  localStorage.setItem('nz_places', JSON.stringify(places));
+  if (window.NZNative && NZNative.geoSetPlaces) NZNative.geoSetPlaces(places);
+  if ($('setPlacesVal')) $('setPlacesVal').textContent = placesSummary();
+}
+
+function placesSummary() {
+  const n = getPlaces().length;
+  return n ? String(n) + ' 📍' : t('off');
+}
+
+function renderPlacesModal() {
+  const list = $('placesList');
+  list.innerHTML = '';
+  getPlaces().forEach((p) => {
+    const li = document.createElement('li');
+    li.className = 'place-row';
+    li.innerHTML = `
+      <span class="place-name">📍 ${escapeHtml(p.name)}</span>
+      <select class="place-radius when-input">${PLACE_RADII.map((r) => `<option value="${r}" ${r === p.radius ? 'selected' : ''}>${r} m</option>`).join('')}</select>
+      <button class="place-del when-clear" title="${t('delete')}">✕</button>`;
+    li.querySelector('.place-radius').onchange = (e) => {
+      const places = getPlaces();
+      const me = places.find((x) => x.id === p.id);
+      if (me) me.radius = parseInt(e.target.value, 10);
+      savePlaces(places);
+    };
+    li.querySelector('.place-del').onclick = () => {
+      savePlaces(getPlaces().filter((x) => x.id !== p.id));
+      renderPlacesModal();
+    };
+    list.appendChild(li);
+  });
+}
+
+async function addPlace() {
+  const btn = $('placeAddBtn');
+  btn.disabled = true;
+  // Radar-Animation zeigen – GPS braucht ein paar Sekunden, sonst wirkt die App eingefroren.
+  $('placeLocating').classList.remove('hidden');
+  btn.classList.add('hidden');
+  try {
+    const status = await NZNative.geoRequestPermission();
+    if (status === 'denied') {
+      $('placesPermHint').classList.remove('hidden');
+      return;
+    }
+    const pos = await NZNative.geoCurrentPosition();
+    // Animation VOR der Namens-Abfrage ausblenden (prompt blockiert die Anzeige)
+    $('placeLocating').classList.add('hidden');
+    btn.classList.remove('hidden');
+    if (!pos) return;
+    const name = (prompt(t('placeNamePrompt'), 'Rewe') || '').trim();
+    if (!name) return;
+    const places = getPlaces();
+    places.push({ id: NZ.uid(), name, lat: pos.lat, lng: pos.lng, radius: 150 });
+    savePlaces(places);
+    renderPlacesModal();
+    // "Immer erlauben" nachfordern (nötig für Erinnerungen bei geschlossener App)
+    const st = await NZNative.geoAuthStatus();
+    $('placesPermHint').classList.toggle('hidden', st === 'always');
+  } catch (e) {
+    alert(t('errGeneric') + (e.message || e));
+  } finally {
+    btn.disabled = false;
+    $('placeLocating').classList.add('hidden');
+    btn.classList.remove('hidden');
+  }
+}
+
+// Offene Einkäufe für die Ankunfts-Push zusammenfassen (liest das native Plugin beim Betreten).
+// Teilaufgaben mit zugewiesenem Ort zählen NUR an ihrem Ort; unzugeordnete Punkte der
+// Einkaufsliste zählen überall (Standard-Zusammenfassung).
+function updateGeoSummary() {
+  if (!(window.NZNative && NZNative.geoSetSummary && NZNative.geoAvailable && NZNative.geoAvailable())) return;
+  const shopRe = /einkauf|shopping|shop|kauf|grocer|supermarkt|markt/i;
+  const places = getPlaces();
+
+  // Ort-zugewiesene offene Punkte über ALLE Notizen einsammeln
+  const byPlace = {}; // placeId -> Anzahl offener Punkte
+  (data.notes || []).forEach((n) => {
+    (n.subtasks || []).forEach((s) => {
+      if (s.deleted || (s.status || 'todo') === 'done' || !s.place) return;
+      byPlace[s.place] = (byPlace[s.place] || 0) + 1;
+    });
+  });
+
+  // Unzugeordnete offene Punkte der Einkaufs-/angepinnten Liste (wie bisher)
+  const cands = (data.notes || [])
+    .map((n) => ({
+      n,
+      open: (n.subtasks || []).filter((s) => !s.deleted && (s.status || 'todo') !== 'done' && !s.place).length
+    }))
+    .filter((x) => x.open > 0);
+  const match = cands.find((x) => shopRe.test(x.n.title || '')) || cands.find((x) => x.n.pinned) || null;
+
+  const defCount = match ? match.open : 0;
+  const defBody = match ? t('placesPushBody', { n: match.open, title: match.n.title || t('untitled') }) : '';
+
+  // Pro Ort: eigene Punkte zuerst, unzugeordnete zählen mit
+  const map = {};
+  places.forEach((p) => {
+    const own = byPlace[p.id] || 0;
+    if (!own) return; // kein Eintrag → Plugin nimmt den Standard
+    const total = own + defCount;
+    let body = t('placesPushBodyPlace', { n: own, place: p.name });
+    if (defCount) body += ' · ' + defBody;
+    map[p.id] = { count: total, body };
+  });
+
+  NZNative.geoSetSummary(defCount, defBody, map);
 }
 
 // ---- Morgen-Briefing: Einstellungen ----
@@ -395,9 +540,14 @@ function renderFolderSelect() {
   data.folders.forEach((f) => {
     const opt = document.createElement('option');
     opt.value = f;
-    opt.textContent = f;
+    opt.textContent = '📁 ' + f;
     folderSelect.appendChild(opt);
   });
+  // Ordner direkt aus dem Editor anlegen können (auf dem Handy gibt es sonst keinen Weg)
+  const add = document.createElement('option');
+  add.value = '__new';
+  add.textContent = t('newFolderOpt');
+  folderSelect.appendChild(add);
 }
 
 // ---- Agenda: Notizen mit Termin als eigene, chronologische Sektion ----
@@ -430,15 +580,25 @@ function agendaRow(n, d, askDone) {
   const li = document.createElement('li');
   li.className = 'agenda-item' + (askDone ? ' agenda-ask' : '');
   li.innerHTML = `
-    <div class="agenda-tile"><span class="ag-wd">${escapeHtml(wd)}</span><span class="ag-day">${d.getDate()}</span></div>
-    <div class="agenda-main">
-      <div class="agenda-title">${escapeHtml(n.title) || t('untitled')}</div>
-      ${sub ? `<div class="agenda-sub">${escapeHtml(sub)}</div>` : ''}
-    </div>
-    ${RSVP_ENABLED && n.share && n.share.code && n.rsvp && Object.keys(n.rsvp).length ? `<span class="agenda-rsvp">✓${Object.values(n.rsvp).filter((r) => r.v === 'yes').length}</span>` : ''}
-    ${n.share && n.share.code ? '<span class="agenda-share">🔗</span>' : ''}
-    ${askDone ? `<button class="agenda-done-btn" title="${t('markDone')}">✓</button>` : ''}`;
-  li.onclick = () => openNote(n.id);
+    <button class="agenda-del" title="${t('delete')}" aria-label="${t('delete')}">🗑</button>
+    <div class="agenda-inner">
+      <div class="agenda-tile"><span class="ag-wd">${escapeHtml(wd)}</span><span class="ag-day">${d.getDate()}</span></div>
+      <div class="agenda-main">
+        <div class="agenda-title">${escapeHtml(n.title) || t('untitled')}</div>
+        ${sub ? `<div class="agenda-sub">${escapeHtml(sub)}</div>` : ''}
+      </div>
+      ${RSVP_ENABLED && n.share && n.share.code && n.rsvp && Object.keys(n.rsvp).length ? `<span class="agenda-rsvp">✓${Object.values(n.rsvp).filter((r) => r.v === 'yes').length}</span>` : ''}
+      ${n.share && n.share.code ? '<span class="agenda-share">🔗</span>' : ''}
+      ${askDone ? `<button class="agenda-done-btn" title="${t('markDone')}">✓</button>` : ''}
+    </div>`;
+  const inner = li.querySelector('.agenda-inner');
+  // Wischen nach links → Löschen aufdecken (wie bei den Notiz-Karten); Tipp öffnet.
+  attachSwipe(li, inner, n.id, 72);
+  li.querySelector('.agenda-del').onclick = (e) => {
+    e.stopPropagation();
+    deleteNoteById(n.id);
+    renderTermine();
+  };
   if (askDone) {
     li.querySelector('.agenda-done-btn').onclick = (e) => {
       e.stopPropagation();
@@ -608,7 +768,8 @@ function closeAllSwipes() {
   if (openSwipedCard) closeSwipe(openSwipedCard);
 }
 
-function attachSwipe(li, inner, noteId) {
+function attachSwipe(li, inner, noteId, revealPx) {
+  const reveal = revealPx || 144;
   let startX = 0;
   let startY = 0;
   let dx = 0;
@@ -640,8 +801,8 @@ function attachSwipe(li, inner, noteId) {
     }
     if (decided !== 'h') return;
     suppressClick = true;
-    const base = li.classList.contains('swiped') ? -144 : 0;
-    dx = Math.max(-158, Math.min(0, base + mx));
+    const base = li.classList.contains('swiped') ? -reveal : 0;
+    dx = Math.max(-(reveal + 14), Math.min(0, base + mx));
     inner.style.transform = 'translateX(' + dx + 'px)';
     e.preventDefault();
   });
@@ -800,6 +961,46 @@ function focusSubAdd() {
   }
 }
 
+// ---- Polling-Fallback für offene geteilte Notizen ----
+// Realtime verwirft Events still, wenn die Notiz groß ist (z.B. Teilaufgaben-Fotos).
+// Deshalb: solange eine geteilte Notiz offen ist, alle 6s frisch aus der Cloud holen.
+let sharedPollTimer = null;
+
+function stopSharedPoll() {
+  if (sharedPollTimer) {
+    clearInterval(sharedPollTimer);
+    sharedPollTimer = null;
+  }
+}
+
+function startSharedPoll(noteId) {
+  stopSharedPoll();
+  if (!(window.NZShare && NZShare.fetchNote)) return;
+  sharedPollTimer = setInterval(async () => {
+    const note = currentNote();
+    if (!note || note.id !== noteId || !(note.share && note.share.code)) {
+      stopSharedPoll();
+      return;
+    }
+    // Nicht reinpfuschen, während hier gerade getippt wird.
+    const ae = document.activeElement;
+    if (ae && (ae.classList.contains('sub-text') || ae.classList.contains('sub-place') || ae.id === 'titleInput' || ae.id === 'bodyInput')) return;
+    try {
+      const row = await NZShare.fetchNote(noteId);
+      const remote = row && row.data;
+      if (!remote || (remote.updatedAt || 0) <= (note.updatedAt || 0)) return;
+      ['title', 'body', 'subtasks', 'when', 'termDone', 'rsvp', 'status', 'pinned', 'folder'].forEach((k) => {
+        if (remote[k] !== undefined) note[k] = remote[k];
+      });
+      note.updatedAt = remote.updatedAt;
+      if (document.activeElement !== titleInput) titleInput.value = note.title || '';
+      renderSubtasks();
+      updateSharedBadge(note);
+      renderNoteList();
+    } catch {}
+  }, 6000);
+}
+
 function openNote(id) {
   const note = data.notes.find((n) => n.id === id);
   if (!note) return;
@@ -807,6 +1008,8 @@ function openNote(id) {
   // Wechsel von einer leeren Notiz weg → die leere verwerfen.
   if (activeNoteId && activeNoteId !== id) discardIfEmpty(activeNoteId);
   activeNoteId = id;
+  if (note.share && note.share.code) startSharedPoll(id);
+  else stopSharedPoll();
   doneGroupOpen = false; // erledigte Teilaufgaben starten zugeklappt
   document.body.classList.add('editor-open'); // Handy: Editor-Ebene einblenden
   setNav(false);
@@ -865,6 +1068,7 @@ function discardIfEmpty(noteId) {
 function closeEditor() {
   const wasActive = activeNoteId;
   activeNoteId = null;
+  stopSharedPoll();
   leavePresence();
   editorEl.classList.add('hidden');
   editorEmptyEl.classList.remove('hidden');
@@ -1034,15 +1238,49 @@ function buildSubItem(st, note, noteShared) {
        <button class="sub-del" title="${t('deleteForever')}">✕</button>`
     : `<button class="sub-photo" title="${t(st.photo ? 'photo' : 'addPhoto')}">📷</button>`;
   const swipeDel = isDeleted ? '' : `<button class="sub-swipe-del" title="${t('deleteSubtask')}">🗑</button>`;
+  // Ort pro Teilaufgabe (nur wenn Einkaufs-Orte existieren): beschrifteter Chip,
+  // der den gewählten Ort direkt anzeigt ("📍 Rewe") bzw. "📍 Ort" als Aufforderung.
+  const places = getPlaces();
+  const placeSel = !isDeleted && places.length
+    ? `<select class="sub-place ${st.place ? 'on' : ''}" title="${t('subPlace')}">
+         ${st.place ? '' : `<option value="" selected>📍 ${t('placeWord')}</option>`}
+         <option value="__clear">${t('noPlace')}</option>
+         ${places.map((p) => `<option value="${p.id}" ${st.place === p.id ? 'selected' : ''}>📍 ${escapeHtml(p.name)}</option>`).join('')}
+       </select>`
+    : '';
+  // Karten-Layout: oben Status + Text, darunter Meta-Zeile (Person · Ort · Foto).
+  // So bleibt der Foto-Knopf auch bei langen Namen/Orten immer erreichbar.
+  const metaBits = isDeleted
+    ? ''
+    : [noteShared ? whoBadge(note, st) : '', placeSel, st.photo ? `<img class="sub-thumb" src="${st.photo}" alt="" />` : '', actions]
+        .filter(Boolean)
+        .join('');
   li.innerHTML = `
       ${swipeDel}
       <div class="sub-inner">
-        <span class="dot dot-${status}" title="${statusLabel(status)} ${t('clickToCycle')}"></span>
-        <input class="sub-text" type="text" value="" ${readOnly ? 'readonly' : ''} />
-        ${st.photo ? `<img class="sub-thumb" src="${st.photo}" alt="" />` : ''}
-        ${noteShared && !isDeleted ? whoBadge(note, st) : ''}
-        ${actions}
+        <div class="sub-main">
+          <span class="dot dot-${status}" title="${statusLabel(status)} ${t('clickToCycle')}"></span>
+          <input class="sub-text" type="text" value="" ${readOnly ? 'readonly' : ''} />
+          ${isDeleted ? actions : ''}
+        </div>
+        ${metaBits ? `<div class="sub-meta">${metaBits}</div>` : ''}
       </div>`;
+  const psel = li.querySelector('.sub-place');
+  if (psel) {
+    psel.onchange = () => {
+      const v = psel.value;
+      if (!v) return;
+      // Immer auf dem AKTUELLEN Objekt arbeiten: Nach einem Live-Reload zeigen die
+      // Closure-Referenzen sonst auf eine verwaiste Kopie → Auswahl "passierte nicht".
+      const cur = currentNote();
+      const target = cur && (cur.subtasks || []).find((x) => x.id === st.id);
+      if (!target) return;
+      target.place = v === '__clear' ? null : v;
+      cur.updatedAt = Date.now();
+      persist();
+      renderSubtasks();
+    };
+  }
   const input = li.querySelector('.sub-text');
   input.value = st.text || '';
   const thumb = li.querySelector('.sub-thumb');
@@ -1092,10 +1330,14 @@ function updateSimpleNoteUI(note) {
   bodyEl.classList.toggle('hidden', !showBody);
   if (bodyEl.value !== (note.body || '')) bodyEl.value = note.body || '';
   // Datum-Zeile immer anbieten → jede Notiz kann manuell zum Termin werden.
+  // WICHTIG: Ohne Termin nur einen Knopf zeigen – das offene datetime-Feld hat sonst
+  // beim versehentlichen Antippen sofort ein Datum gesetzt (Notiz "verschwand" in Termine).
   whenRow.classList.remove('hidden');
   const wi = $('whenInput');
   const val = note.when ? (String(note.when).includes('T') ? String(note.when).slice(0, 16) : note.when + 'T09:00') : '';
   if (wi.value !== val) wi.value = val;
+  $('whenAddBtn').classList.toggle('hidden', !!note.when);
+  wi.classList.toggle('hidden', !note.when);
   $('whenClear').classList.toggle('hidden', !note.when);
   // Erinnerungs-Zeile nur bei Terminen: eigene Zeiten oder Standard.
   const remRow = $('noteRemRow');
@@ -2534,7 +2776,8 @@ function showVoiceConfirm(draft) {
   const isEdit = draft.intent === 'edit';
   const target = isEdit ? data.notes.find((n) => n.id === draft.targetId) : null;
   $('voicePreviewTitle').textContent = draft.title || (target && target.title) || t('newList');
-  $('voicePreviewItems').innerHTML = isNote || isEdit ? '' : (draft.items || []).map((it) => `<li>${escapeHtml(it)}</li>`).join('');
+  // Bei "edit" sind items die NEU hinzuzufügenden Punkte – auch anzeigen.
+  $('voicePreviewItems').innerHTML = isNote ? '' : (draft.items || []).map((it) => `<li>${escapeHtml(it)}</li>`).join('');
   const bodyEl = $('voicePreviewBody');
   if ((isNote || isEdit) && draft.body) {
     bodyEl.textContent = draft.body;
@@ -2611,11 +2854,20 @@ function confirmVoice() {
       if (draft.when) target.when = draft.when;
       if (draft.title) target.title = draft.title;
       if (draft.body) target.body = draft.body;
-      target.termDone = false; // verschobener Termin ist wieder "offen"
+      // Neue Teilaufgaben anhängen ("füge Butter zur Einkaufsliste hinzu")
+      const addedItems = (draft.items || []).filter((s) => s && s.trim());
+      if (addedItems.length) {
+        if (!target.subtasks) target.subtasks = [];
+        addedItems.forEach((s) => target.subtasks.push(NZ.makeSubtask(s, NZDevice.me())));
+        applyAutoStatus(target);
+      }
+      target.termDone = false; // geänderter Termin ist wieder "offen"
       target.updatedAt = Date.now();
       persist();
       renderAll();
-      if (target.when) {
+      if (addedItems.length) {
+        openNote(target.id); // direkt zeigen, was dazugekommen ist
+      } else if (target.when) {
         document.body.classList.remove('search-open');
         closeEditor(); // Editor-Spalte (Tablet) nicht mit alter Notiz stehen lassen
         renderTermine();
@@ -2674,23 +2926,48 @@ $('themeToggle').onclick = () =>
 if ($('langToggle')) $('langToggle').onclick = toggleLanguage;
 
 titleInput.oninput = scheduleSave;
-folderSelect.onchange = scheduleSave;
+folderSelect.onchange = () => {
+  // "+ Neuer Ordner…" gewählt → Namen abfragen, anlegen, dieser Notiz zuweisen
+  if (folderSelect.value === '__new') {
+    const name = (prompt(t('newFolderPrompt')) || '').trim();
+    if (name && !data.folders.includes(name)) data.folders.push(name);
+    renderFolderSelect();
+    folderSelect.value = name && data.folders.includes(name) ? name : '';
+    renderFolders();
+  }
+  scheduleSave();
+};
 $('bodyInput').oninput = scheduleSave;
 $('whenInput').onchange = () => {
   const note = currentNote();
   if (!note) return;
+  const hadWhen = !!note.when;
   note.when = $('whenInput').value || null;
   updateSimpleNoteUI(note); // Erinnerungs-Zeile + ✕ mitziehen
   scheduleSave();
+  // Klar sagen, was passiert: Notiz wandert in den Termine-Tab (sonst wirkt sie "verschwunden").
+  if (!hadWhen && note.when) showToast(t('toastBecameTermin', { title: note.title || t('untitled') }));
 };
 $('whenClear').onclick = () => {
   const note = currentNote();
   if (!note) return;
   note.when = null;
   $('whenInput').value = '';
-  $('whenClear').classList.add('hidden');
-  $('noteRemRow').classList.add('hidden');
+  updateSimpleNoteUI(note);
   scheduleSave();
+};
+$('whenAddBtn').onclick = () => {
+  const note = currentNote();
+  if (!note) return;
+  // Klare Ansage VOR der Umwandlung: die Notiz zieht in den Termine-Tab um.
+  if (!confirm(t('whenConfirmMsg', { title: note.title || t('untitled') }))) return;
+  const d = new Date();
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  const p = (x) => String(x).padStart(2, '0');
+  note.when = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':00';
+  updateSimpleNoteUI(note);
+  scheduleSave();
+  showToast(t('toastBecameTermin', { title: note.title || t('untitled') }));
 };
 $('noteRemRow').onclick = () => {
   const note = currentNote();
@@ -2778,6 +3055,19 @@ if (window.NZNative && NZNative.isNative()) {
     $('joinInput').value = code;
     doJoin();
   });
+
+  // Widget-Tipps: Sperrbildschirm-Widget → direkt Sprachaufnahme, Homescreen-Widget → Termine-Tab.
+  if (NZNative.onAppRoute) {
+    NZNative.onAppRoute({
+      voice: () => NZStore.ready.then(() => startVoice()),
+      termine: () => NZStore.ready.then(() => {
+        renderTermine();
+        document.body.classList.remove('editor-open', 'search-open', 'settings-open');
+        document.body.classList.add('termine-open');
+        setActiveTab('termine');
+      })
+    });
+  }
 
   // Push registrieren – ABER nur wenn Firebase eingerichtet ist (sonst nativer Absturz).
   if (window.NZ_CONFIG && NZ_CONFIG.PUSH) {
@@ -3032,6 +3322,23 @@ $('briefTime').onchange = () => {
   localStorage.setItem('nz_brief_time', $('briefTime').value || '08:00');
   scheduleReminderRefresh();
 };
+
+// ---- Einkaufs-Orte: Dialog ----
+$('setPlacesRow').onclick = async () => {
+  renderPlacesModal();
+  $('placesModal').classList.remove('hidden');
+  if (window.NZNative && NZNative.geoAuthStatus && getPlaces().length) {
+    const st = await NZNative.geoAuthStatus();
+    $('placesPermHint').classList.toggle('hidden', st === 'always');
+  } else {
+    $('placesPermHint').classList.add('hidden');
+  }
+};
+$('placesClose').onclick = () => {
+  $('placesModal').classList.add('hidden');
+  if ($('setPlacesVal')) $('setPlacesVal').textContent = placesSummary();
+};
+$('placeAddBtn').onclick = addPlace;
 $('reminderClose').onclick = () => {
   $('reminderModal').classList.add('hidden');
   if ($('setReminderVal')) $('setReminderVal').textContent = reminderSummary();
@@ -3065,6 +3372,12 @@ function openSettings() {
   if ($('setThemeVal')) $('setThemeVal').textContent = isDark ? t('themeDark') : t('themeLight');
   if ($('setReminderVal')) $('setReminderVal').textContent = reminderSummary();
   if ($('setBriefVal')) $('setBriefVal').textContent = briefSummary();
+  // Einkaufs-Orte nur zeigen, wenn das native Geo-Plugin da ist (iOS-App)
+  if ($('setPlacesRow')) {
+    const geoOk = !!(window.NZNative && NZNative.geoAvailable && NZNative.geoAvailable());
+    $('setPlacesRow').classList.toggle('hidden', !geoOk);
+    if (geoOk && $('setPlacesVal')) $('setPlacesVal').textContent = placesSummary();
+  }
   if ($('setLangVal')) {
     const lang = (window.NZI18N && typeof NZI18N.lang === 'function') ? NZI18N.lang() : (document.documentElement.lang || 'de');
     $('setLangVal').textContent = String(lang).toUpperCase();
@@ -3116,6 +3429,33 @@ $('backBtn').onclick = () => {
     renderAll();
   }
 };
+
+// Wisch von der linken Kante nach rechts → zurück (wie die iOS-Zurück-Geste).
+// Führt zur Liste bzw. zum Termine-Tab zurück, je nachdem woher man kam.
+(function initEditorBackSwipe() {
+  let sx = 0;
+  let sy = 0;
+  let tracking = false;
+  editorEl.addEventListener('pointerdown', (e) => {
+    if (!document.body.classList.contains('editor-open')) return; // nur im Handy-Overlay
+    if (e.clientX > 60) return; // nur von der linken Kante aus
+    tracking = true;
+    sx = e.clientX;
+    sy = e.clientY;
+  });
+  editorEl.addEventListener('pointermove', (e) => {
+    if (!tracking) return;
+    const dx = e.clientX - sx;
+    const dy = Math.abs(e.clientY - sy);
+    if (dx > 70 && dy < 60) {
+      tracking = false;
+      $('backBtn').click();
+    }
+  });
+  const stopTrack = () => { tracking = false; };
+  editorEl.addEventListener('pointerup', stopTrack);
+  editorEl.addEventListener('pointercancel', stopTrack);
+})();
 
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
